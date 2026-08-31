@@ -1,2 +1,4 @@
 requests
 rapidfuzz
+flask
+gunicorn
