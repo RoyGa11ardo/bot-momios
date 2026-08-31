@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot de Momios Novibet vs Draftea/SofaScore activo 24/7"
+    return "Bot de Momios + Estadísticas H2H Novibet vs Draftea/SofaScore activo 24/7"
 
 # === CONFIGURACIÓN DE TELEGRAM ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -37,7 +37,7 @@ def enviar_telegram(mensaje):
         print(f"Error enviando mensaje a Telegram: {e}")
         return False
 
-# === 1. EXTRAER EVENTOS Y CUOTAS DE NOVIBET ===
+# === 1. EXTRAER EVENTOS Y MERCADOS DE NOVIBET ===
 def obtener_eventos_novibet():
     url = "https://www.novibet.mx/api/sports/v1/events/highlights"
     headers = {
@@ -54,19 +54,34 @@ def obtener_eventos_novibet():
                 visita = ev.get("awayTeam", {}).get("name")
                 
                 markets = ev.get("markets", [])
-                cuota_local, cuota_visita = None, None
-                if markets:
-                    outcomes = markets[0].get("outcomes", [])
-                    if len(outcomes) >= 2:
-                        cuota_local = outcomes[0].get("price")
-                        cuota_visita = outcomes[-1].get("price")
-                        
-                if local and visita and cuota_local and cuota_visita:
+                cuotas = {}
+                
+                for market in markets:
+                    m_name = market.get("header", "").lower()
+                    outcomes = market.get("outcomes", [])
+                    
+                    if "resultado" in m_name or "1x2" in m_name or "ganador" in m_name:
+                        if len(outcomes) >= 3:
+                            cuotas["1"] = float(outcomes[0].get("price", 0))
+                            cuotas["X"] = float(outcomes[1].get("price", 0))
+                            cuotas["2"] = float(outcomes[2].get("price", 0))
+                        elif len(outcomes) == 2:
+                            cuotas["1"] = float(outcomes[0].get("price", 0))
+                            cuotas["2"] = float(outcomes[1].get("price", 0))
+                    
+                    if "total" in m_name or "goles" in m_name or "over" in m_name:
+                        for out in outcomes:
+                            desc = out.get("caption", "").lower()
+                            if "más" in desc or "over" in desc or "> 2.5" in desc:
+                                cuotas["O2.5"] = float(out.get("price", 0))
+                            elif "menos" in desc or "under" in desc or "< 2.5" in desc:
+                                cuotas["U2.5"] = float(out.get("price", 0))
+
+                if local and visita and cuotas:
                     partidos.append({
                         "local": local,
                         "visita": visita,
-                        "c_local": float(cuota_local),
-                        "c_visita": float(cuota_visita)
+                        "cuotas": cuotas
                     })
             return partidos
         return []
@@ -90,7 +105,7 @@ def obtener_partidos_sofascore():
         print(f"Error al consultar SofaScore: {e}")
         return []
 
-# === 3. EXTRAER CUOTAS ESPECÍFICAS DE DRAFTEA/SOFASCORE ===
+# === 3. EXTRAER CUOTAS DE DRAFTEA / SOFASCORE ===
 def obtener_cuotas_evento_sofascore(evento_id):
     url = f"https://api.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
     headers = {
@@ -100,37 +115,101 @@ def obtener_cuotas_evento_sofascore(evento_id):
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             markets = r.json().get("markets", [])
+            cuotas_ref = {}
+            fuente = "SofaScore (Mercado Global)"
+            
             for market in markets:
-                # Mercado principal 1X2 / Full time
-                if market.get("marketName") in ["Full time", "1X2", "Match odds"]:
-                    cuota_draftea_local = None
-                    cuota_ref_local = None
-                    
+                m_name = market.get("marketName", "")
+                
+                if m_name in ["Full time", "1X2", "Match odds"]:
                     for provider in market.get("providers", []):
                         nombre_casa = provider.get("bookmaker", {}).get("name", "").lower()
                         choices = provider.get("choices", [])
                         
                         if len(choices) >= 2:
-                            val_local = float(choices[0].get("initialDecimalValue", choices[0].get("decimalValue", 0)))
+                            c1 = float(choices[0].get("initialDecimalValue", choices[0].get("decimalValue", 0)))
+                            c2 = float(choices[-1].get("initialDecimalValue", choices[-1].get("decimalValue", 0)))
+                            cx = float(choices[1].get("initialDecimalValue", choices[1].get("decimalValue", 0))) if len(choices) == 3 else 0
                             
-                            # Prioridad si el proveedor es Draftea
-                            if "draftea" in nombre_casa and val_local > 0:
-                                return val_local, "Draftea"
-                            
-                            if val_local > 0 and not cuota_ref_local:
-                                cuota_ref_local = val_local
-                                
-                    if cuota_ref_local:
-                        return cuota_ref_local, "SofaScore (Mercado Global)"
-        return None, None
-    except Exception as e:
-        print(f"Error extrayendo cuotas de evento SofaScore {evento_id}: {e}")
-        return None, None
+                            if "draftea" in nombre_casa:
+                                fuente = "Draftea"
+                                cuotas_ref["1"] = c1
+                                cuotas_ref["2"] = c2
+                                if cx > 0: cuotas_ref["X"] = cx
+                                break
+                            elif "1" not in cuotas_ref:
+                                cuotas_ref["1"] = c1
+                                cuotas_ref["2"] = c2
+                                if cx > 0: cuotas_ref["X"] = cx
 
-# === 4. CICLO DE MONITOREO Y COMPARACIÓN ===
+            return cuotas_ref, fuente
+        return {}, ""
+    except Exception as e:
+        print(f"Error extrayendo cuotas de SofaScore {evento_id}: {e}")
+        return {}, ""
+
+# === 4. EXTRAER ESTADÍSTICAS, H2H Y ALINEACIONES ===
+def obtener_info_extra_sofascore(evento_id):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    texto_extra = ""
+    
+    # 4a. Consultar Rachas / Datos Clave
+    try:
+        url_streaks = f"https://api.sofascore.com/api/v1/event/{evento_id}/streaks"
+        r = requests.get(url_streaks, headers=headers, timeout=5)
+        if r.status_code == 200:
+            streaks = r.json().get("general", [])
+            lineas_streaks = []
+            for s in streaks[:3]:
+                lineas_streaks.append(f"• {s.get('name')}: {s.get('value')}")
+            if lineas_streaks:
+                texto_extra += "\n\n📊 <b>Dato / Racha Clave:</b>\n" + "\n".join(lineas_streaks)
+    except Exception as e:
+        print(f"Error consultando rachas: {e}")
+
+    # 4b. Consultar Últimos 5 Enfrentamientos Directos (H2H)
+    try:
+        url_h2h = f"https://api.sofascore.com/api/v1/event/{evento_id}/h2h/events"
+        r = requests.get(url_h2h, headers=headers, timeout=5)
+        if r.status_code == 200:
+            h2h_events = r.json().get("events", [])
+            if h2h_events:
+                lineas_h2h = []
+                for ev in h2h_events[:5]: # Solo los últimos 5 partidos
+                    home_team = ev.get("homeTeam", {}).get("name")
+                    away_team = ev.get("awayTeam", {}).get("name")
+                    home_score = ev.get("homeScore", {}).get("current", 0)
+                    away_score = ev.get("awayScore", {}).get("current", 0)
+                    lineas_h2h.append(f"• {home_team} {home_score} - {away_score} {away_team}")
+                
+                texto_extra += "\n\n🥊 <b>Últimos 5 Enfrentamientos Directos (H2H):</b>\n" + "\n".join(lineas_h2h)
+    except Exception as e:
+        print(f"Error consultando H2H: {e}")
+
+    # 4c. Consultar Alineaciones
+    try:
+        url_lineups = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
+        r = requests.get(url_lineups, headers=headers, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            confirmed = data.get("confirmed", False)
+            home_formation = data.get("home", {}).get("formation", "N/D")
+            away_formation = data.get("away", {}).get("formation", "N/D")
+            
+            estado_ali = "Confirmadas" if confirmed else "Por confirmar"
+            texto_extra += (
+                f"\n\n📋 <b>Alineaciones ({estado_ali}):</b>\n"
+                f"• Esquema Táctico: {home_formation} vs {away_formation}"
+            )
+    except Exception as e:
+        print(f"Error consultando alineaciones: {e}")
+        
+    return texto_extra
+
+# === 5. CICLO DE MONITOREO Y COMPARACIÓN ===
 def monitorear():
-    print("🤖 Bot de momios iniciado: Novibet vs Draftea/SofaScore...")
-    enviar_telegram("🚀 <b>Bot de Momios Reconfigurado</b>\n\nComparación activa: Novibet vs Draftea (vía SofaScore).")
+    print("🤖 Bot de momios con H2H iniciado...")
+    enviar_telegram("🚀 <b>Bot Reconfigurado (+ H2H Recientes)</b>\n\nIncluye análisis de los últimos 5 enfrentamientos directos entre equipos.")
     
     while True:
         try:
@@ -143,45 +222,55 @@ def monitorear():
                 for p_novi in novi_partidos:
                     nombre_novi = f"{p_novi['local']} vs {p_novi['visita']}"
                     
-                    # Fuzzy matching de nombres
                     match = process.extractOne(
                         nombre_novi, 
                         nombres_sofa, 
                         scorer=fuzz.token_sort_ratio
                     )
                     
-                    if match and match[1] >= 75: # Similitud >= 75%
+                    if match and match[1] >= 75:
                         idx_sofa = match[2]
                         evento_sofa = sofa_partidos[idx_sofa]
                         evento_id = evento_sofa.get("id")
                         
-                        cuota_ref, fuente = obtener_cuotas_evento_sofascore(evento_id)
+                        cuotas_ref, fuente = obtener_cuotas_evento_sofascore(evento_id)
                         
-                        if cuota_ref and cuota_ref > 0:
-                            # Comparar cuota local de Novibet contra la referencia
-                            if p_novi['c_local'] >= (cuota_ref * UMBRAL_VALOR):
-                                diff = round(((p_novi['c_local'] / cuota_ref) - 1) * 100, 1)
-                                alerta_id = f"{nombre_novi}_local_{p_novi['c_local']}"
-                                
-                                if alerta_id not in alertas_enviadas:
-                                    msg = (
-                                        f"🔥 <b>VALOR DETECTADO EN NOVIBET</b>\n\n"
-                                        f"⚽ <b>Partido:</b> {nombre_novi}\n"
-                                        f"🎯 <b>Apuesta:</b> Victoria {p_novi['local']}\n\n"
-                                        f"🟢 <b>Novibet:</b> {p_novi['c_local']}\n"
-                                        f"📊 <b>Ref ({fuente}):</b> {cuota_ref}\n"
-                                        f"📈 <b>Ventaja:</b> +{diff}%"
-                                    )
-                                    enviar_telegram(msg)
-                                    alertas_enviadas.add(alerta_id)
+                        if cuotas_ref:
+                            etiquetas = {
+                                "1": f"Victoria {p_novi['local']}",
+                                "X": "Empate",
+                                "2": f"Victoria {p_novi['visita']}",
+                                "O2.5": "Más de 2.5 Goles",
+                                "U2.5": "Menos de 2.5 Goles"
+                            }
+                            
+                            for k, c_novi in p_novi["cuotas"].items():
+                                c_ref = cuotas_ref.get(k, 0)
+                                if c_ref > 0 and c_novi >= (c_ref * UMBRAL_VALOR):
+                                    diff = round(((c_novi / c_ref) - 1) * 100, 1)
+                                    alerta_id = f"{nombre_novi}_{k}_{c_novi}"
                                     
-            time.sleep(300) # Revisa cada 5 minutos
+                                    if alerta_id not in alertas_enviadas:
+                                        info_extra = obtener_info_extra_sofascore(evento_id)
+                                        
+                                        msg = (
+                                            f"🔥 <b>VALOR DETECTADO EN NOVIBET</b>\n\n"
+                                            f"⚽ <b>Partido:</b> {nombre_novi}\n"
+                                            f"🎯 <b>Apuesta:</b> {etiquetas.get(k, k)}\n\n"
+                                            f"🟢 <b>Novibet:</b> {c_novi}\n"
+                                            f"📊 <b>Ref ({fuente}):</b> {c_ref}\n"
+                                            f"📈 <b>Ventaja:</b> +{diff}%"
+                                            f"{info_extra}"
+                                        )
+                                        enviar_telegram(msg)
+                                        alertas_enviadas.add(alerta_id)
+                                    
+            time.sleep(300)
 
         except Exception as e:
             print(f"Error en el ciclo principal: {e}")
             time.sleep(60)
 
-# Iniciar el bucle en un hilo secundario
 hilo_bot = threading.Thread(target=monitorear, daemon=True)
 hilo_bot.start()
 
