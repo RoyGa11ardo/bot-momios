@@ -12,7 +12,9 @@ def home():
     return "Bot de Momios activo 24/7"
 
 # === CONFIGURACIÓN DE TELEGRAM ===
-TOKEN = "8526264614:AAEZ0dEaedVOhNKi9HmgJvUuCJfHT5gxGF0"
+import os
+# Lee el token desde las variables de entorno de Render
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "1530533411"
 
 alertas_enviadas = set()
