@@ -1,12 +1,20 @@
+import os
 import time
+import threading
 import requests
-from rapidfuzz import process, fuzz
+from flask import Flask
+
+# Servidor Flask para mantener activo el Web Service gratuito de Render
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot de Momios activo 24/7"
 
 # === CONFIGURACIÓN DE TELEGRAM ===
 TOKEN = "8526264614:AAEZ0dEaedVOhNKi9HmgJvUuCJfHT5gxGF0"
 CHAT_ID = "1530533411"
 
-# Registro en memoria para evitar notificaciones duplicadas
 alertas_enviadas = set()
 
 def enviar_telegram(mensaje):
@@ -23,7 +31,6 @@ def enviar_telegram(mensaje):
         print(f"Error enviando mensaje a Telegram: {e}")
         return False
 
-# === MÓDULO NOVIBET ===
 def obtener_eventos_novibet():
     url = "https://www.novibet.mx/api/sports/v1/events/highlights"
     headers = {
@@ -34,14 +41,11 @@ def obtener_eventos_novibet():
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             return r.json()
-        else:
-            print(f"Novibet HTTP Status: {r.status_code}")
-            return None
+        return None
     except Exception as e:
         print(f"Error al consultar Novibet: {e}")
         return None
 
-# === MÓDULO SOFASCORE ===
 def obtener_partidos_sofascore():
     fecha_hoy = time.strftime("%Y-%m-%d")
     url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
@@ -52,32 +56,26 @@ def obtener_partidos_sofascore():
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             return r.json().get("events", [])
-        else:
-            print(f"SofaScore HTTP Status: {r.status_code}")
-            return []
+        return []
     except Exception as e:
         print(f"Error al consultar SofaScore: {e}")
         return []
 
-# === BUCLE DE MONITOREO 24/7 ===
 def monitorear():
-    print("🤖 Bot de momios iniciado en la nube (Render)...")
+    print("🤖 Bot de momios iniciado en la nube (Render Web Service)...")
     enviar_telegram("🚀 <b>Bot de Momios Activado en la Nube (24/7)</b>\n\nEl servidor está monitoreando Novibet y SofaScore sin restricciones de proxy.")
     
     while True:
         try:
-            # 1. Consulta Novibet
             novi_data = obtener_eventos_novibet()
             if novi_data:
                 print("✓ Datos recibidos correctamente de Novibet.")
             
-            # 2. Consulta SofaScore
             sofa_events = obtener_partidos_sofascore()
             if sofa_events:
                 total_partidos = len(sofa_events)
                 print(f"✓ Datos recibidos correctamente de SofaScore ({total_partidos} partidos hoy).")
                 
-                # Alerta de resumen inicial del día
                 if "resumen_dia" not in alertas_enviadas and total_partidos > 0:
                     primer_evento = sofa_events[0]
                     local = primer_evento.get("homeTeam", {}).get("name", "Local")
@@ -92,12 +90,16 @@ def monitorear():
                     enviar_telegram(msg)
                     alertas_enviadas.add("resumen_dia")
 
-            # Pausa de 5 minutos entre cada revisión
             time.sleep(300)
 
         except Exception as e:
             print(f"Error en el ciclo principal: {e}")
             time.sleep(60)
 
+# Iniciar el bucle del bot en un hilo secundario
+hilo_bot = threading.Thread(target=monitorear, daemon=True)
+hilo_bot.start()
+
 if __name__ == "__main__":
-    monitorear()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
