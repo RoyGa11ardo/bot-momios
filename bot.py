@@ -7,7 +7,8 @@ from rapidfuzz import process, fuzz
 
 app = Flask(__name__)
 
-@app.route('/')
+# Se añade explícitamente el método HEAD que usa UptimeRobot
+@app.route('/', methods=['GET', 'HEAD'])
 def home():
     return "Bot de Momios + Estadísticas H2H Novibet vs Draftea/SofaScore activo 24/7"
 
@@ -67,7 +68,7 @@ def obtener_eventos_novibet():
                             cuotas["2"] = float(outcomes[2].get("price", 0))
                         elif len(outcomes) == 2:
                             cuotas["1"] = float(outcomes[0].get("price", 0))
-                            cuotas["2"] = float(outcomes[1].get("price", 0))
+                            cuotas["2"] = float(outcomes[2].get("price", 0))
                     
                     if "total" in m_name or "goles" in m_name or "over" in m_name:
                         for out in outcomes:
@@ -175,7 +176,7 @@ def obtener_info_extra_sofascore(evento_id):
             h2h_events = r.json().get("events", [])
             if h2h_events:
                 lineas_h2h = []
-                for ev in h2h_events[:5]: # Solo los últimos 5 partidos
+                for ev in h2h_events[:5]:
                     home_team = ev.get("homeTeam", {}).get("name")
                     away_team = ev.get("awayTeam", {}).get("name")
                     home_score = ev.get("homeScore", {}).get("current", 0)
@@ -208,13 +209,14 @@ def obtener_info_extra_sofascore(evento_id):
 
 # === 5. CICLO DE MONITOREO Y COMPARACIÓN ===
 def monitorear():
-    print("🤖 Bot de momios con H2H iniciado...")
-    enviar_telegram("🚀 <b>Bot Reconfigurado (+ H2H Recientes)</b>\n\nIncluye análisis de los últimos 5 enfrentamientos directos entre equipos.")
+    print("🤖 Bot de momios activado...", flush=True)
     
     while True:
         try:
             novi_partidos = obtener_eventos_novibet()
             sofa_partidos = obtener_partidos_sofascore()
+            
+            print(f"🔍 [Revisión] Novibet: {len(novi_partidos)} partidos | SofaScore: {len(sofa_partidos)} partidos", flush=True)
             
             if novi_partidos and sofa_partidos:
                 nombres_sofa = [f"{s.get('homeTeam', {}).get('name')} vs {s.get('awayTeam', {}).get('name')}" for s in sofa_partidos]
@@ -268,7 +270,7 @@ def monitorear():
             time.sleep(300)
 
         except Exception as e:
-            print(f"Error en el ciclo principal: {e}")
+            print(f"Error en el ciclo principal: {e}", flush=True)
             time.sleep(60)
 
 hilo_bot = threading.Thread(target=monitorear, daemon=True)
