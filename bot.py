@@ -7,10 +7,9 @@ from rapidfuzz import process, fuzz
 
 app = Flask(__name__)
 
-# Se añade explícitamente el método HEAD que usa UptimeRobot
 @app.route('/', methods=['GET', 'HEAD'])
 def home():
-    return "Bot de Momios + Estadísticas H2H Novibet vs Draftea/SofaScore activo 24/7"
+    return "Bot de Momios + Contexto Avanzado Novibet vs SofaScore activo 24/7"
 
 # === CONFIGURACIÓN DE TELEGRAM ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -149,26 +148,80 @@ def obtener_cuotas_evento_sofascore(evento_id):
         print(f"Error extrayendo cuotas de SofaScore {evento_id}: {e}")
         return {}, ""
 
-# === 4. EXTRAER ESTADÍSTICAS, H2H Y ALINEACIONES ===
+# === 4. EXTRAER INFORMACIÓN CONTEXTUAL COMPLETA ===
 def obtener_info_extra_sofascore(evento_id):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     texto_extra = ""
     
-    # 4a. Consultar Rachas / Datos Clave
+    # 4a. Árbitro y Tarjetas
+    try:
+        url_referee = f"https://api.sofascore.com/api/v1/event/{evento_id}"
+        r = requests.get(url_referee, headers=headers, timeout=5)
+        if r.status_code == 200:
+            event_data = r.json().get("event", {})
+            referee = event_data.get("referee", {})
+            if referee:
+                nombre_ref = referee.get("name", "N/D")
+                yellow_cards = referee.get("yellowCards", 0)
+                games = referee.get("games", 0)
+                
+                if games > 0:
+                    prom_yellow = round(yellow_cards / games, 1)
+                    texto_extra += f"\n\n👨‍⚖️ <b>Árbitro (Temporada Actual):</b>\n• {nombre_ref} ({prom_yellow} amarillas/partido en {games} PJ)"
+                else:
+                    texto_extra += f"\n\n👨‍⚖️ <b>Árbitro:</b> {nombre_ref}"
+    except Exception as e:
+        print(f"Error consultando árbitro: {e}")
+
+    # 4b. Ausencias y Bajas
+    try:
+        url_incidents = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
+        r = requests.get(url_incidents, headers=headers, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            missing_home = data.get("home", {}).get("missingPlayers", [])
+            missing_away = data.get("away", {}).get("missingPlayers", [])
+            
+            bajas = []
+            for p in missing_home[:2]:
+                bajas.append(f"• (Local) {p.get('player', {}).get('name')}: {p.get('reason', 'Ausente')}")
+            for p in missing_away[:2]:
+                bajas.append(f"• (Visita) {p.get('player', {}).get('name')}: {p.get('reason', 'Ausente')}")
+                
+            if bajas:
+                texto_extra += "\n\n🚑 <b>Bajas Confirmadas / Dudas:</b>\n" + "\n".join(bajas)
+    except Exception as e:
+        print(f"Error consultando bajas: {e}")
+
+    # 4c. Rachas, Métricas Específicas o Generales
     try:
         url_streaks = f"https://api.sofascore.com/api/v1/event/{evento_id}/streaks"
         r = requests.get(url_streaks, headers=headers, timeout=5)
         if r.status_code == 200:
-            streaks = r.json().get("general", [])
-            lineas_streaks = []
-            for s in streaks[:3]:
-                lineas_streaks.append(f"• {s.get('name')}: {s.get('value')}")
-            if lineas_streaks:
-                texto_extra += "\n\n📊 <b>Dato / Racha Clave:</b>\n" + "\n".join(lineas_streaks)
+            data = r.json()
+            general_streaks = data.get("general", [])
+            
+            lineas_locales = []
+            lineas_generales = []
+            
+            for s in general_streaks:
+                nombre_streak = s.get("name", "").lower()
+                val = s.get("value", "")
+                
+                if any(k in nombre_streak for k in ["home", "away", "casa", "visitante"]):
+                    lineas_locales.append(f"• {s.get('name')}: {val}")
+                else:
+                    lineas_generales.append(f"• {s.get('name')}: {val}")
+            
+            if lineas_locales:
+                texto_extra += "\n\n🏟️ <b>Métricas Específicas (Local/Visitante):</b>\n" + "\n".join(lineas_locales[:3])
+            
+            if lineas_generales:
+                texto_extra += "\n\n📊 <b>Dato / Racha Clave:</b>\n" + "\n".join(lineas_generales[:3])
     except Exception as e:
         print(f"Error consultando rachas: {e}")
 
-    # 4b. Consultar Últimos 5 Enfrentamientos Directos (H2H)
+    # 4d. Últimos 5 Enfrentamientos Directos (H2H)
     try:
         url_h2h = f"https://api.sofascore.com/api/v1/event/{evento_id}/h2h/events"
         r = requests.get(url_h2h, headers=headers, timeout=5)
@@ -187,7 +240,7 @@ def obtener_info_extra_sofascore(evento_id):
     except Exception as e:
         print(f"Error consultando H2H: {e}")
 
-    # 4c. Consultar Alineaciones
+    # 4e. Alineaciones y Formaciones
     try:
         url_lineups = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
         r = requests.get(url_lineups, headers=headers, timeout=5)
