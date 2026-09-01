@@ -4,6 +4,7 @@ import threading
 import requests
 from flask import Flask
 from rapidfuzz import process, fuzz
+from curl_cffi import requests as crequests
 
 app = Flask(__name__)
 
@@ -15,20 +16,18 @@ def home():
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 
-# Umbral de valor: Alerta si Novibet paga 5% o más por encima de la referencia
 UMBRAL_VALOR = 1.05 
-
 alertas_enviadas = set()
 
 HEADERS_SOFASCORE = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "*/*",
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
     "Referer": "https://www.sofascore.com/"
 }
 
 HEADERS_NOVIBET = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"
 }
@@ -54,12 +53,10 @@ def enviar_telegram(mensaje):
 def obtener_eventos_novibet():
     url = "https://www.novibet.mx/api/sports/v1/events/highlights"
     try:
-        r = requests.get(url, headers=HEADERS_NOVIBET, timeout=10)
+        r = crequests.get(url, headers=HEADERS_NOVIBET, impersonate="chrome", timeout=15)
         print(f"DEBUG Novibet Status: {r.status_code}", flush=True)
         if r.status_code == 200:
             data = r.json()
-            # Imprimimos las llaves principales del JSON para depurar
-            print(f"DEBUG Novibet Keys: list(data.keys()) -> {list(data.keys()) if isinstance(data, dict) else type(data)}", flush=True)
             events = data.get("events", [])
             print(f"DEBUG Novibet Events encontrados: {len(events)}", flush=True)
             
@@ -111,7 +108,7 @@ def obtener_partidos_sofascore():
     fecha_hoy = time.strftime("%Y-%m-%d")
     url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
     try:
-        r = requests.get(url, headers=HEADERS_SOFASCORE, timeout=10)
+        r = crequests.get(url, headers=HEADERS_SOFASCORE, impersonate="chrome", timeout=15)
         print(f"DEBUG SofaScore Status: {r.status_code}", flush=True)
         if r.status_code == 200:
             data = r.json()
@@ -129,7 +126,7 @@ def obtener_partidos_sofascore():
 def obtener_cuotas_evento_sofascore(evento_id):
     url = f"https://api.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
     try:
-        r = requests.get(url, headers=HEADERS_SOFASCORE, timeout=10)
+        r = crequests.get(url, headers=HEADERS_SOFASCORE, impersonate="chrome", timeout=10)
         if r.status_code == 200:
             markets = r.json().get("markets", [])
             cuotas_ref = {}
@@ -171,7 +168,7 @@ def obtener_info_extra_sofascore(evento_id):
     
     try:
         url_referee = f"https://api.sofascore.com/api/v1/event/{evento_id}"
-        r = requests.get(url_referee, headers=HEADERS_SOFASCORE, timeout=5)
+        r = crequests.get(url_referee, headers=HEADERS_SOFASCORE, impersonate="chrome", timeout=5)
         if r.status_code == 200:
             event_data = r.json().get("event", {})
             referee = event_data.get("referee", {})
@@ -190,7 +187,7 @@ def obtener_info_extra_sofascore(evento_id):
 
     try:
         url_incidents = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
-        r = requests.get(url_incidents, headers=HEADERS_SOFASCORE, timeout=5)
+        r = crequests.get(url_incidents, headers=HEADERS_SOFASCORE, impersonate="chrome", timeout=5)
         if r.status_code == 200:
             data = r.json()
             missing_home = data.get("home", {}).get("missingPlayers", [])
@@ -209,7 +206,7 @@ def obtener_info_extra_sofascore(evento_id):
 
     try:
         url_streaks = f"https://api.sofascore.com/api/v1/event/{evento_id}/streaks"
-        r = requests.get(url_streaks, headers=HEADERS_SOFASCORE, timeout=5)
+        r = crequests.get(url_streaks, headers=HEADERS_SOFASCORE, impersonate="chrome", timeout=5)
         if r.status_code == 200:
             data = r.json()
             general_streaks = data.get("general", [])
@@ -236,7 +233,7 @@ def obtener_info_extra_sofascore(evento_id):
 
     try:
         url_h2h = f"https://api.sofascore.com/api/v1/event/{evento_id}/h2h/events"
-        r = requests.get(url_h2h, headers=HEADERS_SOFASCORE, timeout=5)
+        r = crequests.get(url_h2h, headers=HEADERS_SOFASCORE, impersonate="chrome", timeout=5)
         if r.status_code == 200:
             h2h_events = r.json().get("events", [])
             if h2h_events:
@@ -254,7 +251,7 @@ def obtener_info_extra_sofascore(evento_id):
 
     try:
         url_lineups = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
-        r = requests.get(url_lineups, headers=HEADERS_SOFASCORE, timeout=5)
+        r = crequests.get(url_lineups, headers=HEADERS_SOFASCORE, impersonate="chrome", timeout=5)
         if r.status_code == 200:
             data = r.json()
             confirmed = data.get("confirmed", False)
