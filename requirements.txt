@@ -1,4 +1,5 @@
+Flask
+gunicorn
 requests
 rapidfuzz
-flask
-gunicorn
+curl_cffi
