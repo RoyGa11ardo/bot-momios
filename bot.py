@@ -9,17 +9,31 @@ from rapidfuzz import process, fuzz
 
 app = Flask(__name__)
 
-@app.route('/', methods=['GET', 'HEAD'])
+@app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios (The Odds API + Novibet) activo 24/7"
+    return "Bot de Momios Multi-liga activo 24/7"
 
 # === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 
-UMBRAL_VALOR = 1.05 
+# UMBRAL TEMPORAL DE PRUEBA (1.00 para capturar cualquier mejora o empate con el mercado)
+# Después puedes volver a subirlo a 1.05 (para buscar +5%) o 1.03 (para +3%)
+UMBRAL_VALOR = 1.00 
 alertas_enviadas = set()
+
+# Lista de ligas a monitorear
+LIGAS = [
+    "soccer_mexico_ligamx",
+    "soccer_uefa_champs_league",
+    "soccer_spain_la_liga",
+    "soccer_epl",
+    "soccer_italy_serie_a",
+    "soccer_france_ligue_one",
+    "soccer_germany_bundesliga",
+    "soccer_england_championship"
+]
 
 def enviar_telegram(mensaje):
     if not TOKEN:
@@ -32,37 +46,35 @@ def enviar_telegram(mensaje):
     except:
         return False
 
-# === OBTENER DATOS DE THE ODDS API (REFERENCIA DE MERCADO) ===
-def obtener_partidos_odds_api():
+# === OBTENER DATOS DE THE ODDS API POR LIGA ===
+def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
         print("⚠️ Falta configurar THE_ODDS_API_KEY en las variables de entorno de Render.", flush=True)
         return []
     
-    # Regiones corregidas y permitidas oficialmente por la API (eu, us)
-    sport_key = "soccer_mexico_ligamx" 
     target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
     
     try:
         r = requests.get(target_url, timeout=15)
-        print(f"DEBUG The Odds API Status: {r.status_code}", flush=True)
         if r.status_code == 200:
             data = r.json()
-            print(f"DEBUG The Odds API Eventos encontrados: {len(data)}", flush=True)
             return data
         else:
-            print(f"DEBUG The Odds API Error: {r.text[:150]}", flush=True)
+            print(f"DEBUG {sport_key} Error Status: {r.status_code}", flush=True)
             return []
     except Exception as e:
-        print(f"Error al consultar The Odds API: {e}", flush=True)
+        print(f"Error al consultar {sport_key}: {e}", flush=True)
         return []
 
-# === CICLO DE MONITOREO ===
+# === CICLO DE MONITOREO MULTI-LIGA ===
 def monitorear():
-    print("🤖 Bot de momios optimizado activado...", flush=True)
+    print("🤖 Bot de momios multi-liga (modo pruebas) activado...", flush=True)
     
     while True:
-        try:
-            eventos = obtener_partidos_odds_api()
+        total_eventos = 0
+        for sport_key in LIGAS:
+            eventos = obtener_partidos_liga(sport_key)
+            total_eventos += len(eventos)
             
             if eventos:
                 for evento in eventos:
@@ -71,7 +83,6 @@ def monitorear():
                     nombre_partido = f"{local} vs {visita}"
                     
                     bookmakers = evento.get("bookmakers", [])
-                    
                     cuotas_mercado = {}
                     novibet_cuotas = {}
                     
@@ -117,7 +128,7 @@ def monitorear():
                                 
                                 if alerta_id not in alertas_enviadas:
                                     msg = (
-                                        f"🔥 <b>VALOR DETECTADO EN NOVIBET</b>\n\n"
+                                        f"🔥 <b>VALOR DETECTADO EN NOVIBET (PRUEBA)</b>\n\n"
                                         f"⚽ <b>Partido:</b> {nombre_partido}\n"
                                         f"🎯 <b>Apuesta:</b> {etiquetas.get(k, k)}\n\n"
                                         f"🟢 <b>Novibet:</b> {c_novi}\n"
@@ -126,12 +137,11 @@ def monitorear():
                                     )
                                     enviar_telegram(msg)
                                     alertas_enviadas.add(alerta_id)
-                                    
-            time.sleep(300)
+            
+            time.sleep(2)
 
-        except Exception as e:
-            print(f"Error en el ciclo principal: {e}", flush=True)
-            time.sleep(60)
+        print(f"🔍 [Revisión Completa] Total de partidos analizados: {total_eventos}", flush=True)
+        time.sleep(300)
 
 hilo_bot = threading.Thread(target=monitorear, daemon=True)
 hilo_bot.start()
