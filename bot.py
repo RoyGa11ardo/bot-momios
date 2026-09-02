@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+from datetime import datetime, timezone
 import requests
 from flask import Flask
 from rapidfuzz import process, fuzz
@@ -36,15 +37,18 @@ def enviar_telegram(mensaje):
         print(f"Error enviando mensaje a Telegram: {e}")
         return False
 
-def hacer_peticion_proxy(target_url):
-    """Pasa la petición por ScraperAPI si la API Key está presente."""
+def hacer_peticion_proxy(target_url, render_js=False):
+    """Realiza la petición usando ScraperAPI si está configurado."""
     if SCRAPERAPI_KEY:
         proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={target_url}"
-        return requests.get(proxy_url, timeout=30)
+        if render_js:
+            proxy_url += "&render=true"
+        return requests.get(proxy_url, timeout=45)
     else:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*"
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "es-ES,es;q=0.9"
         }
         return requests.get(target_url, headers=headers, timeout=15)
 
@@ -58,10 +62,16 @@ def obtener_eventos_novibet():
             try:
                 data = r.json()
             except Exception:
-                print("⚠️ Novibet respondió 200 pero no entregó JSON válido.", flush=True)
-                return []
+                # Si Novibet requiere renderizado Javascript para responder el JSON
+                print("⚠️ Reintentando Novibet con renderizado JS...", flush=True)
+                r = hacer_peticion_proxy(target_url, render_js=True)
+                try:
+                    data = r.json()
+                except Exception:
+                    print("⚠️ Novibet no retornó un formato JSON válido.", flush=True)
+                    return []
 
-            events = data.get("events", [])
+            events = data.get("events", []) if isinstance(data, dict) else []
             print(f"DEBUG Novibet Events encontrados: {len(events)}", flush=True)
             
             partidos = []
@@ -76,7 +86,7 @@ def obtener_eventos_novibet():
                     m_name = market.get("header", "").lower()
                     outcomes = market.get("outcomes", [])
                     
-                    if "resultado" in m_name or "1x2" in m_name or "ganador" in m_name:
+                    if any(k in m_name for k in ["resultado", "1x2", "ganador"]):
                         if len(outcomes) >= 3:
                             cuotas["1"] = float(outcomes[0].get("price", 0))
                             cuotas["X"] = float(outcomes[1].get("price", 0))
@@ -85,7 +95,7 @@ def obtener_eventos_novibet():
                             cuotas["1"] = float(outcomes[0].get("price", 0))
                             cuotas["2"] = float(outcomes[2].get("price", 0))
                     
-                    if "total" in m_name or "goles" in m_name or "over" in m_name:
+                    if any(k in m_name for k in ["total", "goles", "over"]):
                         for out in outcomes:
                             desc = out.get("caption", "").lower()
                             if "más" in desc or "over" in desc or "> 2.5" in desc:
@@ -109,7 +119,7 @@ def obtener_eventos_novibet():
 
 # === 2. EXTRAER PARTIDOS DE SOFASCORE ===
 def obtener_partidos_sofascore():
-    fecha_hoy = time.strftime("%Y-%m-%d")
+    fecha_hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     target_url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
     try:
         r = hacer_peticion_proxy(target_url)
