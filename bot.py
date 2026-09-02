@@ -1,8 +1,10 @@
 import os
 import time
+import json
+import re
 import threading
 from datetime import datetime
-import pytz
+from zoneinfo import ZoneInfo
 import requests
 from flask import Flask
 from rapidfuzz import process, fuzz
@@ -23,27 +25,20 @@ alertas_enviadas = set()
 
 def enviar_telegram(mensaje):
     if not TOKEN:
-        print("Error: No se encontró TELEGRAM_TOKEN")
         return False
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": mensaje,
-        "parse_mode": "HTML"
-    }
+    payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=10)
         return r.status_code == 200
-    except Exception as e:
-        print(f"Error enviando mensaje a Telegram: {e}")
+    except:
         return False
 
 def hacer_peticion_proxy(target_url, extra_headers=None):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
-        "Cache-Control": "no-cache"
+        "Accept": "application/json, text/html, application/xhtml+xml, */*",
+        "Accept-Language": "es-MX,es;q=0.9,en;q=0.8"
     }
     if extra_headers:
         headers.update(extra_headers)
@@ -56,59 +51,80 @@ def hacer_peticion_proxy(target_url, extra_headers=None):
 
 # === 1. EXTRAER EVENTOS Y MERCADOS DE NOVIBET ===
 def obtener_eventos_novibet():
-    target_url = "https://www.novibet.mx/api/sports/v1/events/highlights?sportId=1"
-    extra_headers = {
-        "Referer": "https://www.novibet.mx/",
-        "X-Requested-With": "XMLHttpRequest"
-    }
+    # En lugar de la API bloqueada, pedimos la web normal de apuestas de fútbol
+    target_url = "https://www.novibet.mx/apuestas-deportivas/futbol/1"
     
     try:
-        r = hacer_peticion_proxy(target_url, extra_headers)
+        r = hacer_peticion_proxy(target_url)
         print(f"DEBUG Novibet Status: {r.status_code}", flush=True)
-        
-        # LOG de seguridad: Imprimir los primeros 250 caracteres de lo que responde Novibet
-        print(f"DEBUG Novibet Response Body: {r.text[:250]}...", flush=True)
         
         partidos = []
         if r.status_code == 200:
-            try:
-                data = r.json()
-                events = data.get("events", []) if isinstance(data, dict) else []
-                print(f"DEBUG Novibet Events encontrados: {len(events)}", flush=True)
-                
-                for ev in events:
-                    local = ev.get("homeTeam", {}).get("name")
-                    visita = ev.get("awayTeam", {}).get("name")
-                    
-                    markets = ev.get("markets", [])
-                    cuotas = {}
-                    
-                    for market in markets:
-                        m_name = str(market.get("header", "") or market.get("name", "")).lower()
-                        outcomes = market.get("outcomes", [])
-                        
-                        if any(k in m_name for k in ["resultado", "1x2", "ganador", "match odds"]):
-                            if len(outcomes) >= 3:
-                                cuotas["1"] = float(outcomes[0].get("price", 0))
-                                cuotas["X"] = float(outcomes[1].get("price", 0))
-                                cuotas["2"] = float(outcomes[2].get("price", 0))
-                        
-                        if any(k in m_name for k in ["total", "goles", "over"]):
-                            for out in outcomes:
-                                desc = str(out.get("caption", "") or out.get("name", "")).lower()
-                                if "más" in desc or "over" in desc or "> 2.5" in desc:
-                                    cuotas["O2.5"] = float(out.get("price", 0))
-                                elif "menos" in desc or "under" in desc or "< 2.5" in desc:
-                                    cuotas["U2.5"] = float(out.get("price", 0))
+            texto = r.text
+            
+            # Buscar todos los bloques JSON inyectados en la página (Angular state)
+            json_blocks = re.findall(r'<script[^>]*type=["\']application/json["\'][^>]*>(.*?)</script>', texto, re.DOTALL | re.IGNORECASE)
+            
+            # Alternativa: Buscar variables globales de Javascript con objetos JSON
+            json_blocks.extend(re.findall(r'window\.[a-zA-Z0-9_]+\s*=\s*({.*?});', texto, re.DOTALL))
+            
+            events = []
+            
+            # Función recursiva para escanear todo el JSON sin importar cómo esté estructurado
+            def buscar_eventos_dict(d):
+                if isinstance(d, dict):
+                    if "homeTeam" in d and "awayTeam" in d and "markets" in d:
+                        events.append(d)
+                    for v in d.values():
+                        buscar_eventos_dict(v)
+                elif isinstance(d, list):
+                    for item in d:
+                        buscar_eventos_dict(item)
 
-                    if local and visita and cuotas:
-                        partidos.append({
-                            "local": str(local),
-                            "visita": str(visita),
-                            "cuotas": cuotas
-                        })
-            except Exception as e:
-                print(f"⚠️ Error estructurando JSON de Novibet: {e}", flush=True)
+            # Intentar procesar todos los bloques encontrados
+            for block in json_blocks:
+                try:
+                    data = json.loads(block)
+                    buscar_eventos_dict(data)
+                except:
+                    continue
+                    
+            print(f"DEBUG Novibet Events encontrados en HTML: {len(events)}", flush=True)
+
+            for ev in events:
+                local = ev.get("homeTeam", {}).get("name") if isinstance(ev.get("homeTeam"), dict) else ev.get("homeTeam")
+                visita = ev.get("awayTeam", {}).get("name") if isinstance(ev.get("awayTeam"), dict) else ev.get("awayTeam")
+                
+                markets = ev.get("markets", [])
+                cuotas = {}
+                
+                for market in markets:
+                    m_name = str(market.get("header", "") or market.get("name", "")).lower()
+                    outcomes = market.get("outcomes", [])
+                    
+                    if any(k in m_name for k in ["resultado", "1x2", "ganador"]):
+                        if len(outcomes) >= 3:
+                            cuotas["1"] = float(outcomes[0].get("price", 0))
+                            cuotas["X"] = float(outcomes[1].get("price", 0))
+                            cuotas["2"] = float(outcomes[2].get("price", 0))
+                        elif len(outcomes) == 2:
+                            cuotas["1"] = float(outcomes[0].get("price", 0))
+                            cuotas["2"] = float(outcomes[1].get("price", 0))
+                    
+                    if any(k in m_name for k in ["total", "goles", "over"]):
+                        for out in outcomes:
+                            desc = str(out.get("caption", "") or out.get("name", "")).lower()
+                            if "más" in desc or "over" in desc or "> 2.5" in desc:
+                                cuotas["O2.5"] = float(out.get("price", 0))
+                            elif "menos" in desc or "under" in desc or "< 2.5" in desc:
+                                cuotas["U2.5"] = float(out.get("price", 0))
+
+                if local and visita and cuotas:
+                    partidos.append({
+                        "local": str(local),
+                        "visita": str(visita),
+                        "cuotas": cuotas
+                    })
         return partidos
     except Exception as e:
         print(f"Error al consultar Novibet: {e}", flush=True)
@@ -116,11 +132,11 @@ def obtener_eventos_novibet():
 
 # === 2. EXTRAER PARTIDOS DE SOFASCORE ===
 def obtener_partidos_sofascore():
-    tz = pytz.timezone("America/Mexico_City")
+    tz = ZoneInfo("America/Mexico_City")
     fecha_hoy = datetime.now(tz).strftime("%Y-%m-%d")
     
-    # URL corregida (dominio principal /api/v1)
-    target_url = f"https://www.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
+    # URL corregida (api.sofascore.com en lugar de www)
+    target_url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
     extra_headers = {
         "Referer": "https://www.sofascore.com/",
         "Origin": "https://www.sofascore.com"
@@ -129,14 +145,14 @@ def obtener_partidos_sofascore():
     try:
         r = hacer_peticion_proxy(target_url, extra_headers)
         print(f"DEBUG SofaScore Status: {r.status_code}", flush=True)
-        if r.status_code != 200:
-             print(f"DEBUG SofaScore Response: {r.text[:250]}...", flush=True)
-
+        
         if r.status_code == 200:
             data = r.json()
             events = data.get("events", [])
             print(f"DEBUG SofaScore Events encontrados para {fecha_hoy}: {len(events)}", flush=True)
             return events
+        else:
+             print(f"DEBUG SofaScore Error Response: {r.text[:150]}", flush=True)
         return []
     except Exception as e:
         print(f"Error al consultar SofaScore: {e}", flush=True)
@@ -144,7 +160,7 @@ def obtener_partidos_sofascore():
 
 # === 3. EXTRAER CUOTAS DE SOFASCORE ===
 def obtener_cuotas_evento_sofascore(evento_id):
-    target_url = f"https://www.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
+    target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
     extra_headers = {"Referer": "https://www.sofascore.com/"}
     try:
         r = hacer_peticion_proxy(target_url, extra_headers)
