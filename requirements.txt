@@ -3,3 +3,4 @@ gunicorn
 requests
 rapidfuzz
 curl_cffi
+pytz
