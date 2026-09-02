@@ -32,15 +32,15 @@ def enviar_telegram(mensaje):
     except:
         return False
 
-# === 1. OBTENER DATOS DE THE ODDS API (REFERENCIA DE MERCADO) ===
+# === OBTENER DATOS DE THE ODDS API (REFERENCIA DE MERCADO) ===
 def obtener_partidos_odds_api():
     if not THE_ODDS_API_KEY:
         print("⚠️ Falta configurar THE_ODDS_API_KEY en las variables de entorno de Render.", flush=True)
         return []
     
-    # Usamos fútbol soccer / ligas principales (ej. Champions, Liga MX, Premier League)
-    sport_key = "soccer_mexico_ligamx" # O puedes cambiarlo a soccer_epl, etc.
-    target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us,mx&markets=h2h&oddsFormat=decimal"
+    # Regiones corregidas y permitidas oficialmente por la API (eu, us)
+    sport_key = "soccer_mexico_ligamx" 
+    target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
     
     try:
         r = requests.get(target_url, timeout=15)
@@ -56,7 +56,7 @@ def obtener_partidos_odds_api():
         print(f"Error al consultar The Odds API: {e}", flush=True)
         return []
 
-# === 2. CICLO DE MONITOREO ===
+# === CICLO DE MONITOREO ===
 def monitorear():
     print("🤖 Bot de momios optimizado activado...", flush=True)
     
@@ -72,8 +72,6 @@ def monitorear():
                     
                     bookmakers = evento.get("bookmakers", [])
                     
-                    # Buscamos si Novibet u otras casas están disponibles en la respuesta
-                    # The Odds API incluye casas de apuestas globales y locales según la región
                     cuotas_mercado = {}
                     novibet_cuotas = {}
                     
@@ -92,21 +90,17 @@ def monitorear():
                                     elif name == visita:
                                         precios["2"] = float(price)
                                     else:
-                                        precios["X"] = float(price) # En caso de empate
+                                        precios["X"] = float(price)
                                         
                                 if "novibet" in book_key:
                                     novibet_cuotas = precios
                                 else:
-                                    # Guardamos como referencia de mercado general
                                     for k, v in precios.items():
-                                    # Promediamos o guardamos la referencia
                                         if k not in cuotas_mercado:
                                             cuotas_mercado[k] = []
                                         cuotas_mercado[k].append(v)
 
-                    # Si tenemos cuotas de Novibet y referencias del mercado
                     if novibet_cuotas and cuotas_mercado:
-                        # Calcular promedio del mercado
                         promedios_ref = {k: sum(v)/len(v) for k, v in cuotas_mercado.items() if v}
                         
                         etiquetas = {
