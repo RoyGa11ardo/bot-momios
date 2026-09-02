@@ -20,7 +20,6 @@ THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 UMBRAL_VALOR = 1.00 
 alertas_enviadas = set()
 
-# Ligas con claves estándar actualizadas de The Odds API
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_uefa_champs_league",
@@ -33,46 +32,41 @@ LIGAS = [
 
 def enviar_telegram(mensaje):
     if not TOKEN:
-        print("⚠️ TELEGRAM_TOKEN no está configurado.", flush=True)
         return False
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=10)
-        print(f"DEBUG Telegram Status: {r.status_code}", flush=True)
         return r.status_code == 200
-    except Exception as e:
-        print(f"Error enviando a Telegram: {e}", flush=True)
+    except:
         return False
 
-# === OBTENER DATOS DE THE ODDS API POR LIGA ===
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
-        print("⚠️ Falta configurar THE_ODDS_API_KEY en las variables de entorno de Render.", flush=True)
         return []
     
-    target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
+    # Probamos con regiones ampliadas para ver si aparece Novibet
+    target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us,uk&markets=h2h&oddsFormat=decimal"
     
     try:
         r = requests.get(target_url, timeout=15)
         if r.status_code == 200:
             return r.json()
         else:
-            print(f"DEBUG {sport_key} Error Status: {r.status_code} | Res respuesta: {r.text[:100]}", flush=True)
+            print(f"DEBUG {sport_key} Error Status: {r.status_code}", flush=True)
             return []
     except Exception as e:
         print(f"Error al consultar {sport_key}: {e}", flush=True)
         return []
 
-# === CICLO DE MONITOREO MULTI-LIGA ===
 def monitorear():
-    print("🤖 Bot de momios multi-liga activado...", flush=True)
-    
-    # Mensaje de prueba inicial para verificar que Telegram responde de inmediato
-    enviar_telegram("🚀 <b>¡El Bot de Momios se ha iniciado con éxito!</b> Monitoreando mercados...")
+    print("🤖 Bot de momios multi-liga (diagnóstico) activado...", flush=True)
+    enviar_telegram("🔍 <b>Iniciando ciclo de diagnóstico de bookies...</b>")
     
     while True:
         total_eventos = 0
+        bookmakers_detectados = set()
+        
         for sport_key in LIGAS:
             eventos = obtener_partidos_liga(sport_key)
             total_eventos += len(eventos)
@@ -89,6 +83,8 @@ def monitorear():
                     
                     for book in bookmakers:
                         book_key = book.get("key", "").lower()
+                        bookmakers_detectados.add(book_key) # Guardamos para imprimir
+                        
                         markets = book.get("markets", [])
                         for m in markets:
                             if m.get("key") == "h2h":
@@ -114,12 +110,7 @@ def monitorear():
 
                     if novibet_cuotas and cuotas_mercado:
                         promedios_ref = {k: sum(v)/len(v) for k, v in cuotas_mercado.items() if v}
-                        
-                        etiquetas = {
-                            "1": f"Victoria {local}",
-                            "X": "Empate",
-                            "2": f"Victoria {visita}"
-                        }
+                        etiquetas = {"1": f"Victoria {local}", "X": "Empate", "2": f"Victoria {visita}"}
                         
                         for k, c_novi in novibet_cuotas.items():
                             c_ref = promedios_ref.get(k, 0)
@@ -141,7 +132,8 @@ def monitorear():
             
             time.sleep(2)
 
-        print(f"🔍 [Revisión Completa] Total de partidos analizados: {total_eventos}", flush=True)
+        # Imprimimos las casas de apuestas que encontró la API en los logs de Render
+        print(f"🔍 [Diagnóstico] Partidos: {total_eventos} | Bookies encontradas en la API: {list(bookmakers_detectados)}", flush=True)
         time.sleep(300)
 
 hilo_bot = threading.Thread(target=monitorear, daemon=True)
