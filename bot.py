@@ -5,7 +5,6 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import requests
 from flask import Flask
-from rapidfuzz import process, fuzz
 
 app = Flask(__name__)
 
@@ -18,12 +17,10 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 
-# UMBRAL TEMPORAL DE PRUEBA (1.00 para capturar cualquier mejora o empate con el mercado)
-# Después puedes volver a subirlo a 1.05 (para buscar +5%) o 1.03 (para +3%)
 UMBRAL_VALOR = 1.00 
 alertas_enviadas = set()
 
-# Lista de ligas a monitorear
+# Ligas con claves estándar actualizadas de The Odds API
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_uefa_champs_league",
@@ -31,19 +28,21 @@ LIGAS = [
     "soccer_epl",
     "soccer_italy_serie_a",
     "soccer_france_ligue_one",
-    "soccer_germany_bundesliga",
-    "soccer_england_championship"
+    "soccer_germany_bundesliga"
 ]
 
 def enviar_telegram(mensaje):
     if not TOKEN:
+        print("⚠️ TELEGRAM_TOKEN no está configurado.", flush=True)
         return False
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=10)
+        print(f"DEBUG Telegram Status: {r.status_code}", flush=True)
         return r.status_code == 200
-    except:
+    except Exception as e:
+        print(f"Error enviando a Telegram: {e}", flush=True)
         return False
 
 # === OBTENER DATOS DE THE ODDS API POR LIGA ===
@@ -57,10 +56,9 @@ def obtener_partidos_liga(sport_key):
     try:
         r = requests.get(target_url, timeout=15)
         if r.status_code == 200:
-            data = r.json()
-            return data
+            return r.json()
         else:
-            print(f"DEBUG {sport_key} Error Status: {r.status_code}", flush=True)
+            print(f"DEBUG {sport_key} Error Status: {r.status_code} | Res respuesta: {r.text[:100]}", flush=True)
             return []
     except Exception as e:
         print(f"Error al consultar {sport_key}: {e}", flush=True)
@@ -68,7 +66,10 @@ def obtener_partidos_liga(sport_key):
 
 # === CICLO DE MONITOREO MULTI-LIGA ===
 def monitorear():
-    print("🤖 Bot de momios multi-liga (modo pruebas) activado...", flush=True)
+    print("🤖 Bot de momios multi-liga activado...", flush=True)
+    
+    # Mensaje de prueba inicial para verificar que Telegram responde de inmediato
+    enviar_telegram("🚀 <b>¡El Bot de Momios se ha iniciado con éxito!</b> Monitoreando mercados...")
     
     while True:
         total_eventos = 0
@@ -128,7 +129,7 @@ def monitorear():
                                 
                                 if alerta_id not in alertas_enviadas:
                                     msg = (
-                                        f"🔥 <b>VALOR DETECTADO EN NOVIBET (PRUEBA)</b>\n\n"
+                                        f"🔥 <b>VALOR DETECTADO EN NOVIBET</b>\n\n"
                                         f"⚽ <b>Partido:</b> {nombre_partido}\n"
                                         f"🎯 <b>Apuesta:</b> {etiquetas.get(k, k)}\n\n"
                                         f"🟢 <b>Novibet:</b> {c_novi}\n"
