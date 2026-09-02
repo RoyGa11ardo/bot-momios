@@ -4,7 +4,6 @@ import threading
 import requests
 from flask import Flask
 from rapidfuzz import process, fuzz
-from curl_cffi import requests as crequests
 
 app = Flask(__name__)
 
@@ -12,29 +11,13 @@ app = Flask(__name__)
 def home():
     return "Bot de Momios + Contexto Avanzado Novibet vs SofaScore activo 24/7"
 
-# === CONFIGURACIÓN DE TELEGRAM ===
+# === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
+SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "")
 
 UMBRAL_VALOR = 1.05 
 alertas_enviadas = set()
-
-# Crear sesión persistente para mantener cookies
-session = crequests.Session()
-
-HEADERS_GENERICOS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1"
-}
 
 def enviar_telegram(mensaje):
     if not TOKEN:
@@ -53,23 +36,31 @@ def enviar_telegram(mensaje):
         print(f"Error enviando mensaje a Telegram: {e}")
         return False
 
+def hacer_peticion_proxy(target_url):
+    """Pasa la petición por ScraperAPI si la API Key está presente."""
+    if SCRAPERAPI_KEY:
+        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={target_url}"
+        return requests.get(proxy_url, timeout=30)
+    else:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*"
+        }
+        return requests.get(target_url, headers=headers, timeout=15)
+
 # === 1. EXTRAER EVENTOS Y MERCADOS DE NOVIBET ===
 def obtener_eventos_novibet():
-    url = "https://www.novibet.mx/api/sports/v1/events/highlights"
-    headers = HEADERS_GENERICOS.copy()
-    headers["Accept"] = "application/json, text/plain, */*"
-    headers["Referer"] = "https://www.novibet.mx/"
-    
+    target_url = "https://www.novibet.mx/api/sports/v1/events/highlights"
     try:
-        r = session.get(url, headers=headers, impersonate="chrome110", timeout=15)
+        r = hacer_peticion_proxy(target_url)
         print(f"DEBUG Novibet Status: {r.status_code}", flush=True)
         if r.status_code == 200:
             try:
                 data = r.json()
             except Exception:
-                print("⚠️ Novibet devolvió 200 pero el contenido es HTML/Anti-Bot.", flush=True)
+                print("⚠️ Novibet respondió 200 pero no entregó JSON válido.", flush=True)
                 return []
-                
+
             events = data.get("events", [])
             print(f"DEBUG Novibet Events encontrados: {len(events)}", flush=True)
             
@@ -119,18 +110,9 @@ def obtener_eventos_novibet():
 # === 2. EXTRAER PARTIDOS DE SOFASCORE ===
 def obtener_partidos_sofascore():
     fecha_hoy = time.strftime("%Y-%m-%d")
-    url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
-    
-    headers = HEADERS_GENERICOS.copy()
-    headers["Referer"] = "https://www.sofascore.com/"
-    headers["Origin"] = "https://www.sofascore.com"
-    
+    target_url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
     try:
-        # Visitar primero la home para simular navegación y obtener cookies de Cloudflare
-        session.get("https://www.sofascore.com/", headers=HEADERS_GENERICOS, impersonate="chrome110", timeout=10)
-        time.sleep(1)
-        
-        r = session.get(url, headers=headers, impersonate="chrome110", timeout=15)
+        r = hacer_peticion_proxy(target_url)
         print(f"DEBUG SofaScore Status: {r.status_code}", flush=True)
         if r.status_code == 200:
             data = r.json()
@@ -146,12 +128,9 @@ def obtener_partidos_sofascore():
 
 # === 3. EXTRAER CUOTAS DE SOFASCORE ===
 def obtener_cuotas_evento_sofascore(evento_id):
-    url = f"https://api.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
-    headers = HEADERS_GENERICOS.copy()
-    headers["Referer"] = f"https://www.sofascore.com/event/{evento_id}"
-    
+    target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
     try:
-        r = session.get(url, headers=headers, impersonate="chrome110", timeout=10)
+        r = hacer_peticion_proxy(target_url)
         if r.status_code == 200:
             markets = r.json().get("markets", [])
             cuotas_ref = {}
@@ -190,12 +169,10 @@ def obtener_cuotas_evento_sofascore(evento_id):
 # === 4. EXTRAER INFORMACIÓN CONTEXTUAL ===
 def obtener_info_extra_sofascore(evento_id):
     texto_extra = ""
-    headers = HEADERS_GENERICOS.copy()
-    headers["Referer"] = f"https://www.sofascore.com/event/{evento_id}"
     
     try:
-        url_referee = f"https://api.sofascore.com/api/v1/event/{evento_id}"
-        r = session.get(url_referee, headers=headers, impersonate="chrome110", timeout=5)
+        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}"
+        r = hacer_peticion_proxy(target_url)
         if r.status_code == 200:
             event_data = r.json().get("event", {})
             referee = event_data.get("referee", {})
@@ -213,8 +190,8 @@ def obtener_info_extra_sofascore(evento_id):
         print(f"Error consultando árbitro: {e}")
 
     try:
-        url_incidents = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
-        r = session.get(url_incidents, headers=headers, impersonate="chrome110", timeout=5)
+        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
+        r = hacer_peticion_proxy(target_url)
         if r.status_code == 200:
             data = r.json()
             missing_home = data.get("home", {}).get("missingPlayers", [])
@@ -232,8 +209,8 @@ def obtener_info_extra_sofascore(evento_id):
         print(f"Error consultando bajas: {e}")
 
     try:
-        url_streaks = f"https://api.sofascore.com/api/v1/event/{evento_id}/streaks"
-        r = session.get(url_streaks, headers=headers, impersonate="chrome110", timeout=5)
+        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/streaks"
+        r = hacer_peticion_proxy(target_url)
         if r.status_code == 200:
             data = r.json()
             general_streaks = data.get("general", [])
@@ -259,8 +236,8 @@ def obtener_info_extra_sofascore(evento_id):
         print(f"Error consultando rachas: {e}")
 
     try:
-        url_h2h = f"https://api.sofascore.com/api/v1/event/{evento_id}/h2h/events"
-        r = session.get(url_h2h, headers=headers, impersonate="chrome110", timeout=5)
+        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/h2h/events"
+        r = hacer_peticion_proxy(target_url)
         if r.status_code == 200:
             h2h_events = r.json().get("events", [])
             if h2h_events:
@@ -277,8 +254,8 @@ def obtener_info_extra_sofascore(evento_id):
         print(f"Error consultando H2H: {e}")
 
     try:
-        url_lineups = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
-        r = session.get(url_lineups, headers=headers, impersonate="chrome110", timeout=5)
+        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
+        r = hacer_peticion_proxy(target_url)
         if r.status_code == 200:
             data = r.json()
             confirmed = data.get("confirmed", False)
