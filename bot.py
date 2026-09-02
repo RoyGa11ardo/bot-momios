@@ -34,7 +34,7 @@ def enviar_telegram(mensaje):
     except:
         return False
 
-def hacer_peticion_proxy(target_url, extra_headers=None):
+def hacer_peticion_proxy(target_url, extra_headers=None, render_js=False):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/html, application/xhtml+xml, */*",
@@ -45,35 +45,34 @@ def hacer_peticion_proxy(target_url, extra_headers=None):
 
     if SCRAPERAPI_KEY:
         proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={target_url}&keep_headers=true"
-        return requests.get(proxy_url, headers=headers, timeout=45)
+        if render_js:
+            proxy_url += "&render=true"
+        return requests.get(proxy_url, headers=headers, timeout=60)
     else:
-        return requests.get(target_url, headers=headers, timeout=15)
+        return requests.get(target_url, headers=headers, timeout=20)
 
-# === 1. EXTRAER EVENTOS Y MERCADOS DE NOVIBET ===
+# === 1. EXTRAER EVENTOS Y MERCADOS DE NOVIBET (CON RENDERIZADO JS) ===
 def obtener_eventos_novibet():
-    # En lugar de la API bloqueada, pedimos la web normal de apuestas de fútbol
     target_url = "https://www.novibet.mx/apuestas-deportivas/futbol/1"
     
     try:
-        r = hacer_peticion_proxy(target_url)
+        # render_js=True para que ScraperAPI ejecute Angular y cargue los partidos en el DOM
+        r = hacer_peticion_proxy(target_url, render_js=True)
         print(f"DEBUG Novibet Status: {r.status_code}", flush=True)
         
         partidos = []
         if r.status_code == 200:
             texto = r.text
             
-            # Buscar todos los bloques JSON inyectados en la página (Angular state)
+            # Buscar bloques JSON inyectados o estados globales de la aplicación
             json_blocks = re.findall(r'<script[^>]*type=["\']application/json["\'][^>]*>(.*?)</script>', texto, re.DOTALL | re.IGNORECASE)
-            
-            # Alternativa: Buscar variables globales de Javascript con objetos JSON
             json_blocks.extend(re.findall(r'window\.[a-zA-Z0-9_]+\s*=\s*({.*?});', texto, re.DOTALL))
             
             events = []
             
-            # Función recursiva para escanear todo el JSON sin importar cómo esté estructurado
             def buscar_eventos_dict(d):
                 if isinstance(d, dict):
-                    if "homeTeam" in d and "awayTeam" in d and "markets" in d:
+                    if "homeTeam" in d and "awayTeam" in d and ("markets" in d or "prices" in d or "odds" in d):
                         events.append(d)
                     for v in d.values():
                         buscar_eventos_dict(v)
@@ -81,7 +80,6 @@ def obtener_eventos_novibet():
                     for item in d:
                         buscar_eventos_dict(item)
 
-            # Intentar procesar todos los bloques encontrados
             for block in json_blocks:
                 try:
                     data = json.loads(block)
@@ -89,7 +87,7 @@ def obtener_eventos_novibet():
                 except:
                     continue
                     
-            print(f"DEBUG Novibet Events encontrados en HTML: {len(events)}", flush=True)
+            print(f"DEBUG Novibet Events encontrados en HTML renderizado: {len(events)}", flush=True)
 
             for ev in events:
                 local = ev.get("homeTeam", {}).get("name") if isinstance(ev.get("homeTeam"), dict) else ev.get("homeTeam")
@@ -130,12 +128,11 @@ def obtener_eventos_novibet():
         print(f"Error al consultar Novibet: {e}", flush=True)
         return []
 
-# === 2. EXTRAER PARTIDOS DE SOFASCORE ===
+# === 2. EXTRAER PARTIDOS DE SOFASCORE (CON RENDERIZADO JS) ===
 def obtener_partidos_sofascore():
     tz = ZoneInfo("America/Mexico_City")
     fecha_hoy = datetime.now(tz).strftime("%Y-%m-%d")
     
-    # URL corregida (api.sofascore.com en lugar de www)
     target_url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
     extra_headers = {
         "Referer": "https://www.sofascore.com/",
@@ -143,14 +140,18 @@ def obtener_partidos_sofascore():
     }
     
     try:
-        r = hacer_peticion_proxy(target_url, extra_headers)
+        # Activamos render_js aquí también para evitar bloqueos por IP Cloudflare
+        r = hacer_peticion_proxy(target_url, extra_headers, render_js=True)
         print(f"DEBUG SofaScore Status: {r.status_code}", flush=True)
         
         if r.status_code == 200:
-            data = r.json()
-            events = data.get("events", [])
-            print(f"DEBUG SofaScore Events encontrados para {fecha_hoy}: {len(events)}", flush=True)
-            return events
+            try:
+                data = r.json()
+                events = data.get("events", [])
+                print(f"DEBUG SofaScore Events encontrados para {fecha_hoy}: {len(events)}", flush=True)
+                return events
+            except:
+                print("⚠️ SofaScore no retornó JSON válido tras renderizado.", flush=True)
         else:
              print(f"DEBUG SofaScore Error Response: {r.text[:150]}", flush=True)
         return []
@@ -163,7 +164,7 @@ def obtener_cuotas_evento_sofascore(evento_id):
     target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
     extra_headers = {"Referer": "https://www.sofascore.com/"}
     try:
-        r = hacer_peticion_proxy(target_url, extra_headers)
+        r = hacer_peticion_proxy(target_url, extra_headers, render_js=False)
         if r.status_code == 200:
             markets = r.json().get("markets", [])
             cuotas_ref = {}
