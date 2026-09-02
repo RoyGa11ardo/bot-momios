@@ -10,14 +10,15 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios con Alerta de Prueba activo 24/7"
+    return "Bot de Momios (Sofascore Link) activo 24/7"
 
 # === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 
-UMBRAL_VALOR = 1.00 
+# Ajusta este valor al porcentaje de ventaja real que busques (ej. 1.05 para +5%)
+UMBRAL_VALOR = 1.05 
 alertas_enviadas = set()
 
 LIGAS = [
@@ -31,7 +32,7 @@ def enviar_telegram(mensaje):
     if not TOKEN:
         return False
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
+    payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML", "disable_web_page_preview": True}
     try:
         r = requests.post(url, json=payload, timeout=10)
         return r.status_code == 200
@@ -40,7 +41,7 @@ def enviar_telegram(mensaje):
 
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
-        print("⚠️ Falta configurar THE_ODDS_API_KEY en las variables de entorno de Render.", flush=True)
+        print("⚠️ Falta configurar THE_ODDS_API_KEY.", flush=True)
         return []
     
     target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
@@ -108,58 +109,52 @@ def ejecutar_ciclo():
                             alerta_id = f"{nombre_partido}_{k}_{c_novi}"
                             
                             if alerta_id not in alertas_enviadas:
+                                # Generar enlace inteligente directo a Sofascore vía búsqueda indexada
+                                query_busqueda = f"site:sofascore.com {local} {visita}".replace(" ", "+")
+                                url_stats = f"https://www.google.com/search?q={query_busqueda}"
+
                                 msg = (
                                     f"🔥 <b>VALOR DETECTADO EN NOVIBET</b>\n\n"
                                     f"⚽ <b>Partido:</b> {nombre_partido}\n"
                                     f"🎯 <b>Apuesta:</b> {etiquetas.get(k, k)}\n\n"
                                     f"🟢 <b>Novibet:</b> {c_novi}\n"
-                                    f"📊 <b>Promedio Mercado:</b> {round(c_ref, 2)}\n"
-                                    f"📈 <b>Ventaja:</b> +{diff}%"
+                                    f"📊 <b>Mercado:</b> {round(c_ref, 2)}\n"
+                                    f"📈 <b>Ventaja:</b> +{diff}%\n\n"
+                                    f"📋 <b>Estadísticas:</b>\n"
+                                    f"<a href='{url_stats}'>👉 Ver partido en Sofascore</a>"
                                 )
                                 enviar_telegram(msg)
                                 alertas_enviadas.add(alerta_id)
         
+        # Pausa de cortesía entre ligas
         time.sleep(3)
 
     print(f"🔍 [Revisión Completa] Partidos analizados: {total_eventos}.", flush=True)
 
 def monitorear():
-    print("🤖 Bot de momios activado con prueba de formato...", flush=True)
+    print("🤖 Bot inicializando. Calculando hora de arranque...", flush=True)
     
-    # 🧪 MENSAJE DE PRUEBA DE FORMATO INMEDIATO
-    mensaje_ejemplo = (
-        "🔥 <b>[MENSAJE DE PRUEBA] VALOR DETECTADO EN NOVIBET</b>\n\n"
-        "⚽ <b>Partido:</b> Real Madrid vs Barcelona\n"
-        "🎯 <b>Apuesta:</b> Victoria Real Madrid\n\n"
-        "🟢 <b>Novibet:</b> 2.15\n"
-        "📊 <b>Promedio Mercado:</b> 2.00\n"
-        "📈 <b>Ventaja:</b> +7.5%"
-    )
-    enviar_telegram(mensaje_ejemplo)
-
     tz = ZoneInfo("America/Mazatlan")
+    ahora = datetime.now(tz)
+    
+    objetivo = ahora.replace(hour=6, minute=0, second=0, microsecond=0)
+    
+    if ahora >= objetivo:
+        objetivo += timedelta(days=1)
+        
+    segundos_espera = (objetivo - ahora).total_seconds()
+    horas_espera = round(segundos_espera / 3600, 2)
+    
+    print(f"⏳ Son las {ahora.strftime('%H:%M:%S')}. Durmiendo {horas_espera} horas hasta las 6:00 a.m...", flush=True)
+    enviar_telegram("💤 <b>Bot activado en modo reposo.</b> Comenzará a buscar momios automáticamente a las 6:00 a.m.")
+    
+    time.sleep(segundos_espera)
     
     while True:
-        ahora = datetime.now(tz)
-        objetivo = ahora.replace(hour=6, minute=0, second=0, microsecond=0)
-        
-        if ahora >= objetivo:
-            objetivo += timedelta(days=1)
-            
-        segundos_hasta_las_6 = (objetivo - ahora).total_seconds()
-        horas_espera = round(segundos_hasta_las_6 / 3600, 2)
-        
-        print(f"⏳ Son las {ahora.strftime('%H:%M:%S')}. Esperando {horas_espera} horas para el primer escaneo a las 6:00 AM...", flush=True)
-        
-        # Dormimos hasta las 6:00 AM
-        time.sleep(segundos_hasta_las_6)
-        
-        # Bucle de los 4 escaneos diarios (cada 6 horas)
-        for _ in range(4):
-            print("🌅 Ejecutando escaneo programado...", flush=True)
-            ejecutar_ciclo()
-            print("💤 Ciclo terminado. Durmiendo 6 horas...", flush=True)
-            time.sleep(21600)
+        print(f"🌅 Ejecutando escaneo a las {datetime.now(tz).strftime('%H:%M:%S')}...", flush=True)
+        ejecutar_ciclo()
+        print("💤 Ciclo terminado. Durmiendo 6 horas...", flush=True)
+        time.sleep(21600)
 
 hilo_bot = threading.Thread(target=monitorear, daemon=True)
 hilo_bot.start()
