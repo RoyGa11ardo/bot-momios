@@ -39,11 +39,11 @@ def enviar_telegram(mensaje):
         return False
 
 def hacer_peticion_proxy(target_url, extra_headers=None):
-    """Realiza la petición enrutada por ScraperAPI asegurando headers requeridos."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-MX,es;q=0.9,en;q=0.8"
+        "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache"
     }
     if extra_headers:
         headers.update(extra_headers)
@@ -56,13 +56,18 @@ def hacer_peticion_proxy(target_url, extra_headers=None):
 
 # === 1. EXTRAER EVENTOS Y MERCADOS DE NOVIBET ===
 def obtener_eventos_novibet():
-    # API oficial de apuestas en vivo y destacados para Fútbol (Sport ID: 1)
     target_url = "https://www.novibet.mx/api/sports/v1/events/highlights?sportId=1"
-    extra_headers = {"Referer": "https://www.novibet.mx/"}
+    extra_headers = {
+        "Referer": "https://www.novibet.mx/",
+        "X-Requested-With": "XMLHttpRequest"
+    }
     
     try:
         r = hacer_peticion_proxy(target_url, extra_headers)
         print(f"DEBUG Novibet Status: {r.status_code}", flush=True)
+        
+        # LOG de seguridad: Imprimir los primeros 250 caracteres de lo que responde Novibet
+        print(f"DEBUG Novibet Response Body: {r.text[:250]}...", flush=True)
         
         partidos = []
         if r.status_code == 200:
@@ -86,9 +91,6 @@ def obtener_eventos_novibet():
                             if len(outcomes) >= 3:
                                 cuotas["1"] = float(outcomes[0].get("price", 0))
                                 cuotas["X"] = float(outcomes[1].get("price", 0))
-                                cuotas["2"] = float(outcomes[2].get("price", 0))
-                            elif len(outcomes) == 2:
-                                cuotas["1"] = float(outcomes[0].get("price", 0))
                                 cuotas["2"] = float(outcomes[2].get("price", 0))
                         
                         if any(k in m_name for k in ["total", "goles", "over"]):
@@ -117,19 +119,24 @@ def obtener_partidos_sofascore():
     tz = pytz.timezone("America/Mexico_City")
     fecha_hoy = datetime.now(tz).strftime("%Y-%m-%d")
     
-    target_url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
-    extra_headers = {"Referer": "https://www.sofascore.com/"}
+    # URL corregida (dominio principal /api/v1)
+    target_url = f"https://www.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
+    extra_headers = {
+        "Referer": "https://www.sofascore.com/",
+        "Origin": "https://www.sofascore.com"
+    }
     
     try:
         r = hacer_peticion_proxy(target_url, extra_headers)
         print(f"DEBUG SofaScore Status: {r.status_code}", flush=True)
+        if r.status_code != 200:
+             print(f"DEBUG SofaScore Response: {r.text[:250]}...", flush=True)
+
         if r.status_code == 200:
             data = r.json()
             events = data.get("events", [])
             print(f"DEBUG SofaScore Events encontrados para {fecha_hoy}: {len(events)}", flush=True)
             return events
-        else:
-            print(f"⚠️ SofaScore respondió con código HTTP: {r.status_code}", flush=True)
         return []
     except Exception as e:
         print(f"Error al consultar SofaScore: {e}", flush=True)
@@ -137,43 +144,29 @@ def obtener_partidos_sofascore():
 
 # === 3. EXTRAER CUOTAS DE SOFASCORE ===
 def obtener_cuotas_evento_sofascore(evento_id):
-    target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
+    target_url = f"https://www.sofascore.com/api/v1/event/{evento_id}/odds/1/all"
     extra_headers = {"Referer": "https://www.sofascore.com/"}
     try:
         r = hacer_peticion_proxy(target_url, extra_headers)
         if r.status_code == 200:
             markets = r.json().get("markets", [])
             cuotas_ref = {}
-            fuente = "SofaScore (Mercado Global)"
+            fuente = "SofaScore"
             
             for market in markets:
                 m_name = market.get("marketName", "")
-                
                 if m_name in ["Full time", "1X2", "Match odds"]:
                     for provider in market.get("providers", []):
-                        nombre_casa = provider.get("bookmaker", {}).get("name", "").lower()
                         choices = provider.get("choices", [])
-                        
-                        if len(choices) >= 2:
-                            c1 = float(choices[0].get("initialDecimalValue", choices[0].get("decimalValue", 0)))
-                            c2 = float(choices[-1].get("initialDecimalValue", choices[-1].get("decimalValue", 0)))
-                            cx = float(choices[1].get("initialDecimalValue", choices[1].get("decimalValue", 0))) if len(choices) == 3 else 0
-                            
-                            if "draftea" in nombre_casa:
-                                fuente = "Draftea"
-                                cuotas_ref["1"] = c1
-                                cuotas_ref["2"] = c2
-                                if cx > 0: cuotas_ref["X"] = cx
-                                break
-                            elif "1" not in cuotas_ref:
-                                cuotas_ref["1"] = c1
-                                cuotas_ref["2"] = c2
-                                if cx > 0: cuotas_ref["X"] = cx
+                        if len(choices) >= 2 and "1" not in cuotas_ref:
+                            cuotas_ref["1"] = float(choices[0].get("initialDecimalValue", choices[0].get("decimalValue", 0)))
+                            cuotas_ref["2"] = float(choices[-1].get("initialDecimalValue", choices[-1].get("decimalValue", 0)))
+                            if len(choices) == 3:
+                                cuotas_ref["X"] = float(choices[1].get("initialDecimalValue", choices[1].get("decimalValue", 0)))
 
             return cuotas_ref, fuente
         return {}, ""
     except Exception as e:
-        print(f"Error extrayendo cuotas de SofaScore {evento_id}: {e}")
         return {}, ""
 
 # === 4. CICLO DE MONITOREO ===
