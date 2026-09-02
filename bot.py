@@ -1,7 +1,10 @@
 import os
 import time
+import json
+import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
+import pytz
 import requests
 from flask import Flask
 from rapidfuzz import process, fuzz
@@ -10,7 +13,7 @@ app = Flask(__name__)
 
 @app.route('/', methods=['GET', 'HEAD'])
 def home():
-    return "Bot de Momios + Contexto Avanzado Novibet vs SofaScore activo 24/7"
+    return "Bot de Momios Novibet vs SofaScore activo 24/7"
 
 # === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -38,88 +41,106 @@ def enviar_telegram(mensaje):
         return False
 
 def hacer_peticion_proxy(target_url, render_js=False):
-    """Realiza la petición usando ScraperAPI si está configurado."""
     if SCRAPERAPI_KEY:
         proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={target_url}"
         if render_js:
             proxy_url += "&render=true"
-        return requests.get(proxy_url, timeout=45)
+        return requests.get(proxy_url, timeout=60)
     else:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-ES,es;q=0.9"
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-MX,es;q=0.9,en;q=0.8"
         }
-        return requests.get(target_url, headers=headers, timeout=15)
+        return requests.get(target_url, headers=headers, timeout=20)
 
 # === 1. EXTRAER EVENTOS Y MERCADOS DE NOVIBET ===
 def obtener_eventos_novibet():
-    target_url = "https://www.novibet.mx/api/sports/v1/events/highlights"
+    # Página pública de fútbol en Novibet México
+    target_url = "https://www.novibet.mx/apuestas-deportivas/futbol/1"
     try:
         r = hacer_peticion_proxy(target_url)
         print(f"DEBUG Novibet Status: {r.status_code}", flush=True)
+        
+        partidos = []
         if r.status_code == 200:
-            try:
-                data = r.json()
-            except Exception:
-                # Si Novibet requiere renderizado Javascript para responder el JSON
-                print("⚠️ Reintentando Novibet con renderizado JS...", flush=True)
-                r = hacer_peticion_proxy(target_url, render_js=True)
-                try:
-                    data = r.json()
-                except Exception:
-                    print("⚠️ Novibet no retornó un formato JSON válido.", flush=True)
-                    return []
-
-            events = data.get("events", []) if isinstance(data, dict) else []
-            print(f"DEBUG Novibet Events encontrados: {len(events)}", flush=True)
+            texto = r.text
+            # Buscar datos JSON incrustados en el HTML
+            matches = re.findall(r'window\.__INITIAL_STATE__\s*=\s*({.*?});</script>', texto, re.DOTALL)
             
-            partidos = []
-            for ev in events:
-                local = ev.get("homeTeam", {}).get("name")
-                visita = ev.get("awayTeam", {}).get("name")
-                
-                markets = ev.get("markets", [])
-                cuotas = {}
-                
-                for market in markets:
-                    m_name = market.get("header", "").lower()
-                    outcomes = market.get("outcomes", [])
-                    
-                    if any(k in m_name for k in ["resultado", "1x2", "ganador"]):
-                        if len(outcomes) >= 3:
-                            cuotas["1"] = float(outcomes[0].get("price", 0))
-                            cuotas["X"] = float(outcomes[1].get("price", 0))
-                            cuotas["2"] = float(outcomes[2].get("price", 0))
-                        elif len(outcomes) == 2:
-                            cuotas["1"] = float(outcomes[0].get("price", 0))
-                            cuotas["2"] = float(outcomes[2].get("price", 0))
-                    
-                    if any(k in m_name for k in ["total", "goles", "over"]):
-                        for out in outcomes:
-                            desc = out.get("caption", "").lower()
-                            if "más" in desc or "over" in desc or "> 2.5" in desc:
-                                cuotas["O2.5"] = float(out.get("price", 0))
-                            elif "menos" in desc or "under" in desc or "< 2.5" in desc:
-                                cuotas["U2.5"] = float(out.get("price", 0))
+            if not matches:
+                # Intento con patrón alternativo de script JSON
+                matches = re.findall(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', texto, re.DOTALL)
 
-                if local and visita and cuotas:
-                    partidos.append({
-                        "local": local,
-                        "visita": visita,
-                        "cuotas": cuotas
-                    })
-            return partidos
-        else:
-            print(f"⚠️ Novibet respondió con código HTTP: {r.status_code}", flush=True)
-        return []
+            if matches:
+                try:
+                    data = json.loads(matches[0])
+                    # Buscar eventos dentro del objeto parseado
+                    events = []
+                    
+                    def buscar_eventos_dict(d):
+                        if isinstance(d, dict):
+                            if "homeTeam" in d and "awayTeam" in d:
+                                events.append(d)
+                            for v in d.values():
+                                buscar_eventos_dict(v)
+                        elif isinstance(d, list):
+                            for item in d:
+                                buscar_eventos_dict(item)
+
+                    buscar_eventos_dict(data)
+                    print(f"DEBUG Novibet Events encontrados: {len(events)}", flush=True)
+
+                    for ev in events:
+                        local = ev.get("homeTeam", {}).get("name") if isinstance(ev.get("homeTeam"), dict) else ev.get("homeTeam")
+                        visita = ev.get("awayTeam", {}).get("name") if isinstance(ev.get("awayTeam"), dict) else ev.get("awayTeam")
+                        
+                        markets = ev.get("markets", [])
+                        cuotas = {}
+                        
+                        for market in markets:
+                            m_name = str(market.get("header", "") or market.get("name", "")).lower()
+                            outcomes = market.get("outcomes", [])
+                            
+                            if any(k in m_name for k in ["resultado", "1x2", "ganador"]):
+                                if len(outcomes) >= 3:
+                                    cuotas["1"] = float(outcomes[0].get("price", 0))
+                                    cuotas["X"] = float(outcomes[1].get("price", 0))
+                                    cuotas["2"] = float(outcomes[2].get("price", 0))
+                                elif len(outcomes) == 2:
+                                    cuotas["1"] = float(outcomes[0].get("price", 0))
+                                    cuotas["2"] = float(outcomes[1].get("price", 0))
+                            
+                            if any(k in m_name for k in ["total", "goles", "over"]):
+                                for out in outcomes:
+                                    desc = str(out.get("caption", "") or out.get("name", "")).lower()
+                                    if "más" in desc or "over" in desc or "> 2.5" in desc:
+                                        cuotas["O2.5"] = float(out.get("price", 0))
+                                    elif "menos" in desc or "under" in desc or "< 2.5" in desc:
+                                        cuotas["U2.5"] = float(out.get("price", 0))
+
+                        if local and visita and cuotas:
+                            partidos.append({
+                                "local": str(local),
+                                "visita": str(visita),
+                                "cuotas": cuotas
+                            })
+                except Exception as e:
+                    print(f"⚠️ Error al procesar JSON de Novibet: {e}", flush=True)
+            else:
+                print("⚠️ No se encontró bloque JSON en la página de Novibet.", flush=True)
+                
+        return partidos
     except Exception as e:
         print(f"Error al consultar Novibet: {e}", flush=True)
         return []
 
 # === 2. EXTRAER PARTIDOS DE SOFASCORE ===
 def obtener_partidos_sofascore():
-    fecha_hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Obtener fecha actual en zona horaria de México
+    tz = pytz.timezone("America/Mexico_City")
+    fecha_hoy = datetime.now(tz).strftime("%Y-%m-%d")
+    
     target_url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{fecha_hoy}"
     try:
         r = hacer_peticion_proxy(target_url)
@@ -176,113 +197,7 @@ def obtener_cuotas_evento_sofascore(evento_id):
         print(f"Error extrayendo cuotas de SofaScore {evento_id}: {e}")
         return {}, ""
 
-# === 4. EXTRAER INFORMACIÓN CONTEXTUAL ===
-def obtener_info_extra_sofascore(evento_id):
-    texto_extra = ""
-    
-    try:
-        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}"
-        r = hacer_peticion_proxy(target_url)
-        if r.status_code == 200:
-            event_data = r.json().get("event", {})
-            referee = event_data.get("referee", {})
-            if referee:
-                nombre_ref = referee.get("name", "N/D")
-                yellow_cards = referee.get("yellowCards", 0)
-                games = referee.get("games", 0)
-                
-                if games > 0:
-                    prom_yellow = round(yellow_cards / games, 1)
-                    texto_extra += f"\n\n👨‍⚖️ <b>Árbitro (Temporada Actual):</b>\n• {nombre_ref} ({prom_yellow} amarillas/partido en {games} PJ)"
-                else:
-                    texto_extra += f"\n\n👨‍⚖️ <b>Árbitro:</b> {nombre_ref}"
-    except Exception as e:
-        print(f"Error consultando árbitro: {e}")
-
-    try:
-        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
-        r = hacer_peticion_proxy(target_url)
-        if r.status_code == 200:
-            data = r.json()
-            missing_home = data.get("home", {}).get("missingPlayers", [])
-            missing_away = data.get("away", {}).get("missingPlayers", [])
-            
-            bajas = []
-            for p in missing_home[:2]:
-                bajas.append(f"• (Local) {p.get('player', {}).get('name')}: {p.get('reason', 'Ausente')}")
-            for p in missing_away[:2]:
-                bajas.append(f"• (Visita) {p.get('player', {}).get('name')}: {p.get('reason', 'Ausente')}")
-                
-            if bajas:
-                texto_extra += "\n\n🚑 <b>Bajas Confirmadas / Dudas:</b>\n" + "\n".join(bajas)
-    except Exception as e:
-        print(f"Error consultando bajas: {e}")
-
-    try:
-        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/streaks"
-        r = hacer_peticion_proxy(target_url)
-        if r.status_code == 200:
-            data = r.json()
-            general_streaks = data.get("general", [])
-            
-            lineas_locales = []
-            lineas_generales = []
-            
-            for s in general_streaks:
-                nombre_streak = s.get("name", "").lower()
-                val = s.get("value", "")
-                
-                if any(k in nombre_streak for k in ["home", "away", "casa", "visitante"]):
-                    lineas_locales.append(f"• {s.get('name')}: {val}")
-                else:
-                    lineas_generales.append(f"• {s.get('name')}: {val}")
-            
-            if lineas_locales:
-                texto_extra += "\n\n🏟️ <b>Métricas Específicas (Local/Visitante):</b>\n" + "\n".join(lineas_locales[:3])
-            
-            if lineas_generales:
-                texto_extra += "\n\n📊 <b>Dato / Racha Clave:</b>\n" + "\n".join(lineas_generales[:3])
-    except Exception as e:
-        print(f"Error consultando rachas: {e}")
-
-    try:
-        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/h2h/events"
-        r = hacer_peticion_proxy(target_url)
-        if r.status_code == 200:
-            h2h_events = r.json().get("events", [])
-            if h2h_events:
-                lineas_h2h = []
-                for ev in h2h_events[:5]:
-                    home_team = ev.get("homeTeam", {}).get("name")
-                    away_team = ev.get("awayTeam", {}).get("name")
-                    home_score = ev.get("homeScore", {}).get("current", 0)
-                    away_score = ev.get("awayScore", {}).get("current", 0)
-                    lineas_h2h.append(f"• {home_team} {home_score} - {away_score} {away_team}")
-                
-                texto_extra += "\n\n🥊 <b>Últimos 5 Enfrentamientos Directos (H2H):</b>\n" + "\n".join(lineas_h2h)
-    except Exception as e:
-        print(f"Error consultando H2H: {e}")
-
-    try:
-        target_url = f"https://api.sofascore.com/api/v1/event/{evento_id}/lineups"
-        r = hacer_peticion_proxy(target_url)
-        if r.status_code == 200:
-            data = r.json()
-            confirmed = data.get("confirmed", False)
-            home_formation = data.get("home", {}).get("formation", "N/D")
-            away_formation = data.get("away", {}).get("formation", "N/D")
-            
-            estado_ali = "Confirmadas" if confirmed else "Por confirmar"
-            texto_extra += (
-                f"\n\n📋 <b>Alineaciones ({estado_ali}):</b>\n"
-                f"• Esquema Táctico: {home_formation} vs {away_formation}"
-            )
-    except Exception as e:
-        print(f"Error consultando alineaciones: {e}")
-        
-    return texto_extra
-
-# === 5. CICLO DE MONITOREO ===
+# === 4. CICLO DE MONITOREO ===
 def monitorear():
     print("🤖 Bot de momios activado...", flush=True)
     
@@ -328,8 +243,6 @@ def monitorear():
                                     alerta_id = f"{nombre_novi}_{k}_{c_novi}"
                                     
                                     if alerta_id not in alertas_enviadas:
-                                        info_extra = obtener_info_extra_sofascore(evento_id)
-                                        
                                         msg = (
                                             f"🔥 <b>VALOR DETECTADO EN NOVIBET</b>\n\n"
                                             f"⚽ <b>Partido:</b> {nombre_novi}\n"
@@ -337,7 +250,6 @@ def monitorear():
                                             f"🟢 <b>Novibet:</b> {c_novi}\n"
                                             f"📊 <b>Ref ({fuente}):</b> {c_ref}\n"
                                             f"📈 <b>Ventaja:</b> +{diff}%"
-                                            f"{info_extra}"
                                         )
                                         enviar_telegram(msg)
                                         alertas_enviadas.add(alerta_id)
