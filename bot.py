@@ -18,7 +18,7 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 
 # Ajusta este valor al porcentaje de ventaja real que busques (ej. 1.05 para +5%)
-UMBRAL_VALOR = 1.05 
+UMBRAL_VALOR = 1.03
 alertas_enviadas = set()
 
 LIGAS = [
