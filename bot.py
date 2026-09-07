@@ -69,6 +69,15 @@ def obtener_partidos_liga(sport_key):
         print(f"❌ Excepción consultando {sport_key}: {e}", flush=True)
         return []
 
+def formatear_fecha_local(commence_time_str, tz):
+    try:
+        # La API manda formato ISO tipo "2026-09-07T21:00:00Z"
+        dt_utc = datetime.fromisoformat(commence_time_str.replace("Z", "+00:00"))
+        dt_local = dt_utc.astimezone(tz)
+        return dt_local.strftime("%H:%M hrs (%d/%b)")
+    except Exception:
+        return "Horario por confirmar"
+
 def ejecutar_ciclo(es_prueba_inicial=False):
     tipo_ciclo = "PRUEBA DE INICIO" if es_prueba_inicial else "PROGRAMADO"
     print(f"🚀 Ejecutando ciclo [{tipo_ciclo}]...", flush=True)
@@ -88,10 +97,12 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                 local = evento.get("home_team")
                 visita = evento.get("away_team")
                 nombre_partido = f"{local} vs {visita}"
+                commence_time = evento.get("commence_time", "")
+                
+                hora_local_str = formatear_fecha_local(commence_time, tz)
                 
                 bookmakers = evento.get("bookmakers", [])
                 cuotas_mercado = { "1": [], "X": [], "2": [] }
-                draftkings_cuotas = {}
                 pinnacle_cuotas = {}
                 
                 for book in bookmakers:
@@ -111,50 +122,20 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                                 else:
                                     precios["X"] = float(price)
                                     
-                            if book_key == "draftkings":
-                                draftkings_cuotas = precios
-                            elif book_key == "pinnacle":
+                            if book_key == "pinnacle":
                                 pinnacle_cuotas = precios
                             
                             for k, v in precios.items():
                                 if k in cuotas_mercado:
                                     cuotas_mercado[k].append(v)
 
-                # Calcular promedios de referencia del mercado
                 promedios_ref = {k: (sum(v)/len(v)) for k, v in cuotas_mercado.items() if v}
-                
-                # 1. EVALUAR VALOR EN DRAFTKINGS (+5% vs Promedio o Pinnacle)
-                if draftkings_cuotas:
-                    etiquetas = {"1": f"Victoria {local}", "X": "Empate", "2": f"Victoria {visita}"}
-                    ref_base = pinnacle_cuotas if pinnacle_cuotas else promedios_ref
-                    
-                    for k, c_dk in draftkings_cuotas.items():
-                        c_ref = ref_base.get(k, 0)
-                        if c_ref > 0 and c_dk >= (c_ref * UMBRAL_VALOR):
-                            diff = round(((c_dk / c_ref) - 1) * 100, 1)
-                            alerta_id = f"{nombre_partido}_{k}_{c_dk}"
-                            
-                            if alerta_id not in alertas_enviadas:
-                                query_busqueda = f"site:sofascore.com {local} {visita}".replace(" ", "+")
-                                url_stats = f"https://www.google.com/search?q={query_busqueda}"
 
-                                msg = (
-                                    f"🔥 <b>¡VALOR DETECTADO EN DRAFTKINGS!</b>\n\n"
-                                    f"⚽ <b>Partido:</b> {nombre_partido}\n"
-                                    f"🎯 <b>Apuesta:</b> {etiquetas.get(k, k)}\n\n"
-                                    f"🟢 <b>DraftKings:</b> {c_dk}\n"
-                                    f"📊 <b>Referencia Mercado/Pinnacle:</b> {round(c_ref, 2)}\n"
-                                    f"📈 <b>Ventaja:</b> +{diff}%\n\n"
-                                    f"📋 <b>Análisis:</b>\n"
-                                    f"<a href='{url_stats}'>👉 Ver rachas y estadísticas en Sofascore</a>"
-                                )
-                                enviar_telegram(msg)
-                                alertas_enviadas.add(alerta_id)
-
-                # 2. RECOPILAR DATOS PARA EL REPORTE DE CARTELERA
+                # RECOPILAR DATOS PARA EL REPORTE DE CARTELERA
                 if len(partidos_para_reporte) < 6:
-                    query_busqueda = f"site:sofascore.com {local} {visita}".replace(" ", "+")
-                    url_stats = f"https://www.google.com/search?q={query_busqueda}"
+                    # Enlace directo optimizado para abrir en app/navegador móvil sin rodeos
+                    query_sofascore = f"{local} {visita} sofascore".replace(" ", "+")
+                    url_stats = f"https://www.google.com/search?q={query_sofascore}&btnI=I"
                     
                     p_1 = round(promedios_ref.get("1", 0), 2) if promedios_ref.get("1") else "-"
                     p_x = round(promedios_ref.get("X", 0), 2) if promedios_ref.get("X") else "-"
@@ -162,18 +143,18 @@ def ejecutar_ciclo(es_prueba_inicial=False):
 
                     partidos_para_reporte.append(
                         f"• <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
+                        f"   ⏰ <b>Hora:</b> {hora_local_str}\n"
                         f"   📊 Promedio Mercado: 1({p_1}) | X({p_x}) | 2({p_2})\n"
-                        f"   👉 <a href='{url_stats}'>Ver estadísticas en Sofascore</a>"
+                        f"   👉 <a href='{url_stats}'>Abrir en Sofascore / App</a>"
                     )
 
         time.sleep(1)
 
     print(f"📊 [Resumen Ciclo] Total eventos procesados: {total_eventos}", flush=True)
 
-    # ENVIAR REPORTE
     if partidos_para_reporte:
         cuerpo_reporte = "\n\n".join(partidos_para_reporte)
-        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (ARRANQUE)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DE CARTELERA</b>\n<i>Hora local Sinaloa: {datetime.now(tz).strftime('%H:%M')}</i>"
+        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (MEJORADO)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DE CARTELERA</b>\n<i>Hora local Sinaloa: {datetime.now(tz).strftime('%H:%M')}</i>"
         
         reporte_msg = f"{titulo_rep}\n\n{cuerpo_reporte}"
         enviar_telegram(reporte_msg)
@@ -196,13 +177,11 @@ def monitorear():
     print("🤖 Bot de Momios inicializando hilo principal...", flush=True)
     tz = ZoneInfo("America/Mazatlan")
     
-    # 1. Ejecutar prueba inmediata al arrancar para verificar Telegram
     try:
         ejecutar_ciclo(es_prueba_inicial=True)
     except Exception as e:
         print(f"❌ Error en la prueba inicial: {e}", flush=True)
 
-    # 2. Entrar en bucle de horarios establecidos
     while True:
         ahora = datetime.now(tz)
         siguiente_objetivo = obtener_siguiente_ejecucion(tz)
