@@ -10,7 +10,17 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios (Zona Horaria Corregida) activo 24/7"
+    return "Bot de Momios Diagnóstico Activo. Entra a /probar para forzar escaneo manual."
+
+@app.route('/probar', methods=['GET'])
+def probar_manual():
+    print("🛠️ [DIAGNÓSTICO] Ejecución manual solicitada vía web (/probar)", flush=True)
+    try:
+        ejecutar_ciclo()
+        return "✅ Escaneo manual ejecutado. Revisa tus logs en Render y Telegram.", 200
+    except Exception as e:
+        print(f"❌ Error en ejecución manual: {e}", flush=True)
+        return f"❌ Error al ejecutar el ciclo: {str(e)}", 500
 
 # === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -36,33 +46,44 @@ HORARIOS_OBJETIVO = [
 
 def enviar_telegram(mensaje):
     if not TOKEN:
+        print("❌ ERROR: TELEGRAM_TOKEN no está configurado en las variables de Render.", flush=True)
         return False
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML", "disable_web_page_preview": True}
     try:
         r = requests.post(url, json=payload, timeout=10)
+        print(f"📱 Telegram Status: {r.status_code}", flush=True)
         return r.status_code == 200
-    except:
+    except Exception as e:
+        print(f"❌ Error enviando a Telegram: {e}", flush=True)
         return False
 
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
+        print("❌ ERROR: THE_ODDS_API_KEY está vacía en las variables de Render.", flush=True)
         return []
     
     target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
     
     try:
         r = requests.get(target_url, timeout=15)
+        print(f"🔍 API Response [{sport_key}] -> Status: {r.status_code}", flush=True)
         if r.status_code == 200:
-            return r.json()
+            data = r.json()
+            print(f"📦 Partidos devueltos para {sport_key}: {len(data)}", flush=True)
+            return data
         else:
+            print(f"⚠️ Error de API en {sport_key}: {r.text}", flush=True)
             return []
-    except:
+    except Exception as e:
+        print(f"❌ Excepción consultando {sport_key}: {e}", flush=True)
         return []
 
 def ejecutar_ciclo():
+    print("🚀 Iniciando ciclo de análisis...", flush=True)
     total_eventos = 0
     partidos_para_reporte = []
+    novibet_encontrados_total = 0
     tz = ZoneInfo("America/Mazatlan")
 
     for sport_key in LIGAS:
@@ -100,6 +121,7 @@ def ejecutar_ciclo():
                                     
                             if "novibet" in book_key:
                                 novibet_cuotas = precios
+                                novibet_encontrados_total += 1
                             else:
                                 for k, v in precios.items():
                                     if k not in cuotas_mercado:
@@ -151,7 +173,9 @@ def ejecutar_ciclo():
 
         time.sleep(2)
 
-    # ENVIAR REPORTE DE CARTELERA DEL CICLO
+    print(f"📊 [Resumen Ciclo] Total eventos procesados: {total_eventos} | Partidos con Novibet encontrados: {novibet_encontrados_total}", flush=True)
+
+    # ENVIAR REPORTE DE CARTELERA DEL CICLO (O aviso si no hubo partidos de Novibet)
     if partidos_para_reporte:
         cuerpo_reporte = "\n\n".join(partidos_para_reporte)
         reporte_msg = (
@@ -160,14 +184,14 @@ def ejecutar_ciclo():
             f"{cuerpo_reporte}"
         )
         enviar_telegram(reporte_msg)
-
-    print(f"🔍 [Revisión Completa] Partidos analizados: {total_eventos}.", flush=True)
+    else:
+        print("ℹ️ No se envió reporte de cartelera porque no se encontraron partidos con datos de Novibet en este bloque.", flush=True)
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
     candidatos = []
     
-    for h, m in HORARIOS_OBJETICO:
+    for h, m in HORARIOS_OBJETIVO:
         objetivo_hoy = ahora.replace(hour=h, minute=m, second=0, microsecond=0)
         if objetivo_hoy > ahora:
             candidatos.append(objetivo_hoy)
@@ -179,10 +203,8 @@ def obtener_siguiente_ejecucion(tz):
     return siguiente
 
 def monitorear():
-    print("🤖 Bot inicializando con zona horaria de Sinaloa...", flush=True)
+    print("🤖 Bot de Diagnóstico inicializando...", flush=True)
     tz = ZoneInfo("America/Mazatlan")
-    
-    enviar_telegram("💤 <b>Bot sincronizado con hora de Sinaloa.</b> Horarios activos: 7:00, 11:30, 15:00 y 18:00.")
     
     while True:
         ahora = datetime.now(tz)
@@ -195,7 +217,7 @@ def monitorear():
         
         time.sleep(segundos_espera)
         
-        print(f"🌅 Ejecutando escaneo a las {datetime.now(tz).strftime('%H:%M:%S')}...", flush=True)
+        print(f"🌅 Ejecutando escaneo programado a las {datetime.now(tz).strftime('%H:%M:%S')}...", flush=True)
         ejecutar_ciclo()
         print("💤 Ciclo finalizado.", flush=True)
 
