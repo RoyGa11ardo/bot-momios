@@ -10,14 +10,13 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios (Horarios Personalizados) activo 24/7"
+    return "Bot de Momios (Zona Horaria Corregida) activo 24/7"
 
 # === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 
-# Umbral de valor para alertas prioritarias (+5%)
 UMBRAL_VALOR = 1.05 
 alertas_enviadas = set()
 
@@ -28,7 +27,6 @@ LIGAS = [
     "soccer_germany_bundesliga"
 ]
 
-# Horarios exactos del día en formato (hora, minuto)
 HORARIOS_OBJETIVO = [
     (7, 0),   # 7:00 a.m.
     (11, 30), # 11:30 a.m.
@@ -49,7 +47,6 @@ def enviar_telegram(mensaje):
 
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
-        print("⚠️ Falta configurar THE_ODDS_API_KEY.", flush=True)
         return []
     
     target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
@@ -59,15 +56,14 @@ def obtener_partidos_liga(sport_key):
         if r.status_code == 200:
             return r.json()
         else:
-            print(f"DEBUG {sport_key} Error Status: {r.status_code}", flush=True)
             return []
-    except Exception as e:
-        print(f"Error al consultar {sport_key}: {e}", flush=True)
+    except:
         return []
 
 def ejecutar_ciclo():
     total_eventos = 0
     partidos_para_reporte = []
+    tz = ZoneInfo("America/Mazatlan")
 
     for sport_key in LIGAS:
         eventos = obtener_partidos_liga(sport_key)
@@ -160,7 +156,7 @@ def ejecutar_ciclo():
         cuerpo_reporte = "\n\n".join(partidos_para_reporte)
         reporte_msg = (
             f"📊 <b>REPORTE DE CARTELERA (CICLO)</b>\n"
-            f"<i>Partidos clave analizados en este bloque:</i>\n\n"
+            f"<i>Hora local Sinaloa: {datetime.now(tz).strftime('%H:%M')}</i>\n\n"
             f"{cuerpo_reporte}"
         )
         enviar_telegram(reporte_msg)
@@ -171,25 +167,22 @@ def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
     candidatos = []
     
-    for h, m in HORARIOS_OBJETIVO:
-        # Probamos el horario para hoy
+    for h, m in HORARIOS_OBJETICO:
         objetivo_hoy = ahora.replace(hour=h, minute=m, second=0, microsecond=0)
         if objetivo_hoy > ahora:
             candidatos.append(objetivo_hoy)
         
-        # Probamos también sumándole un día (para los horarios que ya pasaron hoy)
         objetivo_mañana = objetivo_hoy + timedelta(days=1)
         candidatos.append(objetivo_mañana)
         
-    # Nos quedamos con el candidato más cercano en el tiempo
     siguiente = min(candidatos)
     return siguiente
 
 def monitorear():
-    print("🤖 Bot inicializando con horarios personalizados...", flush=True)
+    print("🤖 Bot inicializando con zona horaria de Sinaloa...", flush=True)
     tz = ZoneInfo("America/Mazatlan")
     
-    enviar_telegram("💤 <b>Bot actualizado</b> (Horarios: 7:00, 11:30, 15:00 y 18:00). Calculando siguiente ciclo...")
+    enviar_telegram("💤 <b>Bot sincronizado con hora de Sinaloa.</b> Horarios activos: 7:00, 11:30, 15:00 y 18:00.")
     
     while True:
         ahora = datetime.now(tz)
@@ -198,13 +191,11 @@ def monitorear():
         segundos_espera = (siguiente_objetivo - ahora).total_seconds()
         horas_espera = round(segundos_espera / 3600, 2)
         
-        print(f"⏳ Son las {ahora.strftime('%H:%M:%S')}. Durmiendo {horas_espera} horas hasta las {siguiente_objetivo.strftime('%H:%M')}...", flush=True)
+        print(f"⏳ Hora local actual: {ahora.strftime('%H:%M:%S')}. Durmiendo {horas_espera} horas hasta las {siguiente_objetivo.strftime('%H:%M')}...", flush=True)
         
-        # Dormimos exactamente los segundos que faltan para el próximo objetivo
         time.sleep(segundos_espera)
         
-        # Al despertar, ejecutamos el ciclo
-        print(f"🌅 Ejecutando escaneo programado a las {datetime.now(tz).strftime('%H:%M:%S')}...", flush=True)
+        print(f"🌅 Ejecutando escaneo a las {datetime.now(tz).strftime('%H:%M:%S')}...", flush=True)
         ejecutar_ciclo()
         print("💤 Ciclo finalizado.", flush=True)
 
