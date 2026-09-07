@@ -1,8 +1,4 @@
 import os
-import time
-import threading
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 import requests
 from flask import Flask
 
@@ -10,17 +6,7 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Diagnóstico Activo. Entra a /probar para forzar escaneo manual."
-
-@app.route('/probar', methods=['GET'])
-def probar_manual():
-    print("🛠️ [DIAGNÓSTICO] Ejecución manual solicitada vía web (/probar)", flush=True)
-    try:
-        ejecutar_ciclo()
-        return "✅ Escaneo manual ejecutado. Revisa tus logs en Render y Telegram.", 200
-    except Exception as e:
-        print(f"❌ Error en ejecución manual: {e}", flush=True)
-        return f"❌ Error al ejecutar el ciclo: {str(e)}", 500
+    return "Bot de Momios Activo"
 
 # === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -37,16 +23,9 @@ LIGAS = [
     "soccer_germany_bundesliga"
 ]
 
-HORARIOS_OBJETIVO = [
-    (7, 0),   # 7:00 a.m.
-    (11, 30), # 11:30 a.m.
-    (15, 0),  # 3:00 p.m.
-    (18, 0)   # 6:00 p.m.
-]
-
 def enviar_telegram(mensaje):
     if not TOKEN:
-        print("❌ ERROR: TELEGRAM_TOKEN no está configurado en las variables de Render.", flush=True)
+        print("❌ ERROR: TELEGRAM_TOKEN no está configurado.", flush=True)
         return False
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML", "disable_web_page_preview": True}
@@ -60,7 +39,7 @@ def enviar_telegram(mensaje):
 
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
-        print("❌ ERROR: THE_ODDS_API_KEY está vacía en las variables de Render.", flush=True)
+        print("❌ ERROR: THE_ODDS_API_KEY está vacía.", flush=True)
         return []
     
     target_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={THE_ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
@@ -79,12 +58,11 @@ def obtener_partidos_liga(sport_key):
         print(f"❌ Excepción consultando {sport_key}: {e}", flush=True)
         return []
 
-def ejecutar_ciclo():
-    print("🚀 Iniciando ciclo de análisis...", flush=True)
+def ejecutar_prueba_inmediata():
+    print("🚀 Ejecutando escaneo de prueba inmediato al arrancar...", flush=True)
     total_eventos = 0
     partidos_para_reporte = []
     novibet_encontrados_total = 0
-    tz = ZoneInfo("America/Mazatlan")
 
     for sport_key in LIGAS:
         eventos = obtener_partidos_liga(sport_key)
@@ -128,35 +106,6 @@ def ejecutar_ciclo():
                                         cuotas_mercado[k] = []
                                     cuotas_mercado[k].append(v)
 
-                # 1. EVALUAR ALERTA DE VALOR (+5%)
-                if novibet_cuotas and cuotas_mercado:
-                    promedios_ref = {k: sum(v)/len(v) for k, v in cuotas_mercado.items() if v}
-                    etiquetas = {"1": f"Victoria {local}", "X": "Empate", "2": f"Victoria {visita}"}
-                    
-                    for k, c_novi in novibet_cuotas.items():
-                        c_ref = promedios_ref.get(k, 0)
-                        if c_ref > 0 and c_novi >= (c_ref * UMBRAL_VALOR):
-                            diff = round(((c_novi / c_ref) - 1) * 100, 1)
-                            alerta_id = f"{nombre_partido}_{k}_{c_novi}"
-                            
-                            if alerta_id not in alertas_enviadas:
-                                query_busqueda = f"site:sofascore.com {local} {visita}".replace(" ", "+")
-                                url_stats = f"https://www.google.com/search?q={query_busqueda}"
-
-                                msg = (
-                                    f"🔥 <b>¡VALOR DETECTADO EN NOVIBET!</b>\n\n"
-                                    f"⚽ <b>Partido:</b> {nombre_partido}\n"
-                                    f"🎯 <b>Apuesta:</b> {etiquetas.get(k, k)}\n\n"
-                                    f"🟢 <b>Novibet:</b> {c_novi}\n"
-                                    f"📊 <b>Mercado:</b> {round(c_ref, 2)}\n"
-                                    f"📈 <b>Ventaja:</b> +{diff}%\n\n"
-                                    f"📋 <b>Análisis:</b>\n"
-                                    f"<a href='{url_stats}'>👉 Ver rachas y estadísticas en Sofascore</a>"
-                                )
-                                enviar_telegram(msg)
-                                alertas_enviadas.add(alerta_id)
-
-                # 2. RECOPILAR DATOS PARA EL REPORTE PERIÓDICO
                 if novibet_cuotas and len(partidos_para_reporte) < 6:
                     query_busqueda = f"site:sofascore.com {local} {visita}".replace(" ", "+")
                     url_stats = f"https://www.google.com/search?q={query_busqueda}"
@@ -171,58 +120,20 @@ def ejecutar_ciclo():
                         f"   👉 <a href='{url_stats}'>Ver estadísticas en Sofascore</a>"
                     )
 
-        time.sleep(2)
+    print(f"📊 [Resumen] Total eventos: {total_eventos} | Novibet encontrados: {novibet_encontrados_total}", flush=True)
 
-    print(f"📊 [Resumen Ciclo] Total eventos procesados: {total_eventos} | Partidos con Novibet encontrados: {novibet_encontrados_total}", flush=True)
-
-    # ENVIAR REPORTE DE CARTELERA DEL CICLO (O aviso si no hubo partidos de Novibet)
     if partidos_para_reporte:
         cuerpo_reporte = "\n\n".join(partidos_para_reporte)
         reporte_msg = (
-            f"📊 <b>REPORTE DE CARTELERA (CICLO)</b>\n"
-            f"<i>Hora local Sinaloa: {datetime.now(tz).strftime('%H:%M')}</i>\n\n"
+            f"🧪 <b>PRUEBA DE ARRANQUE EXITOSA</b>\n\n"
             f"{cuerpo_reporte}"
         )
         enviar_telegram(reporte_msg)
     else:
-        print("ℹ️ No se envió reporte de cartelera porque no se encontraron partidos con datos de Novibet en este bloque.", flush=True)
+        enviar_telegram("⚠️ El bot arrancó pero The Odds API no devolvió partidos con cuotas de Novibet en este momento.")
 
-def obtener_siguiente_ejecucion(tz):
-    ahora = datetime.now(tz)
-    candidatos = []
-    
-    for h, m in HORARIOS_OBJETIVO:
-        objetivo_hoy = ahora.replace(hour=h, minute=m, second=0, microsecond=0)
-        if objetivo_hoy > ahora:
-            candidatos.append(objetivo_hoy)
-        
-        objetivo_mañana = objetivo_hoy + timedelta(days=1)
-        candidatos.append(objetivo_mañana)
-        
-    siguiente = min(candidatos)
-    return siguiente
-
-def monitorear():
-    print("🤖 Bot de Diagnóstico inicializando...", flush=True)
-    tz = ZoneInfo("America/Mazatlan")
-    
-    while True:
-        ahora = datetime.now(tz)
-        siguiente_objetivo = obtener_siguiente_ejecucion(tz)
-        
-        segundos_espera = (siguiente_objetivo - ahora).total_seconds()
-        horas_espera = round(segundos_espera / 3600, 2)
-        
-        print(f"⏳ Hora local actual: {ahora.strftime('%H:%M:%S')}. Durmiendo {horas_espera} horas hasta las {siguiente_objetivo.strftime('%H:%M')}...", flush=True)
-        
-        time.sleep(segundos_espera)
-        
-        print(f"🌅 Ejecutando escaneo programado a las {datetime.now(tz).strftime('%H:%M:%S')}...", flush=True)
-        ejecutar_ciclo()
-        print("💤 Ciclo finalizado.", flush=True)
-
-hilo_bot = threading.Thread(target=monitorear, daemon=True)
-hilo_bot.start()
+# Ejecutar la prueba en cuanto el script compile
+ejecutar_prueba_inmediata()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
