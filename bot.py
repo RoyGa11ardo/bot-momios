@@ -78,7 +78,6 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
             "Sé conciso y ve al grano."
         )
         
-        # Usamos el modelo estándar con búsqueda web habilitada (Grounding) si está soportada
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
@@ -150,7 +149,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                 if dias_restantes < 0:
                     continue
 
-                # Procesar cuotas de mercado actuales
                 bookmakers = evento.get("bookmakers", [])
                 cuotas_mercado = { "1": [], "X": [], "2": [] }
                 
@@ -181,7 +179,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
 
                 url_sofascore = "https://www.sofascore.com"
 
-                # Inicializar registro si es nuevo
                 if nombre_partido not in historial_partidos:
                     historial_partidos[nombre_partido] = {
                         "previo_enviado": None, 
@@ -192,7 +189,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                 registro = historial_partidos[nombre_partido]
                 cuota_anterior = registro.get("ultima_cuota_1", p_1)
 
-                # 1. CHEQUEO DE VOLATILIDAD (Cambios bruscos de momios)
                 if not es_prueba_inicial and cuota_anterior > 0 and p_1 > 0:
                     cambio_porcentual = abs(p_1 - cuota_anterior) / cuota_anterior
                     if cambio_porcentual >= UMBRAL_CAMBIO_BRUSCO:
@@ -206,7 +202,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["ultima_cuota_1"] = p_1
 
-                # 2. CASO A: ES EL MERO DÍA (Incluye análisis estadístico de IA)
                 if dias_restantes == 0:
                     if registro["hoy_enviado"] != hoy or es_prueba_inicial:
                         print(f"🤖 Solicitando análisis estadístico a Gemini para {local} vs {visita}...", flush=True)
@@ -222,7 +217,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["hoy_enviado"] = hoy
 
-                # 3. CASO B: PARTIDO PRÓXIMO (1 a 4 días antes)
                 elif 1 <= dias_restantes <= 4:
                     if not registro["previo_enviado"] or es_prueba_inicial:
                         partidos_para_aviso_previo.append(
@@ -237,7 +231,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
 
         time.sleep(1)
 
-    # ENVÍO DE REPORTES A TELEGRAM
     if alertas_volatilidad and not es_prueba_inicial:
         enviar_telegram("\n\n".join(alertas_volatilidad))
 
@@ -297,4 +290,4 @@ hilo_bot.start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    app.run(0.0.0.0, port=port)
+    app.run("0.0.0.0", port=port)
