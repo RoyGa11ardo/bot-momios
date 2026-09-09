@@ -4,3 +4,4 @@ requests
 rapidfuzz
 curl_cffi
 pytz
+google-genai
