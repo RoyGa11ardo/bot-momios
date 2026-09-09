@@ -1,24 +1,33 @@
 import os
 import time
 import threading
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import requests
 from flask import Flask
+
+# Intentar importar la librería oficial de Google GenAI
+try:
+    from google import genai
+    from google.genai import types
+    GEMINI_DISPONIBLE = True
+except ImportError:
+    GEMINI_DISPONIBLE = False
 
 app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Optimizado y con Radar de Volatilidad Activo"
+    return "Bot de Momios Avanzado con Gemini y Estadísticas Recientes Activo"
 
 # === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# Memoria para control inteligente de avisos y seguimiento de cuotas para detectar cambios bruscos
-# Estructura: { "Nombre del Partido": {"previo_fecha": "...", "hoy_fecha": "...", "ultima_cuota_1": 2.10} }
+# Memoria de control inteligente y seguimiento de cuotas
+# Estructura: { "Nombre del Partido": {"previo_enviado": "...", "hoy_enviado": "...", "ultima_cuota_1": 2.10} }
 historial_partidos = {}
 
 LIGAS = [
@@ -28,14 +37,14 @@ LIGAS = [
     "soccer_germany_bundesliga"
 ]
 
-# Nuevos horarios solicitados (Hora Sinaloa)
+# Horarios fijos (Hora Sinaloa)
 HORARIOS_OBJETIVO = [
     (7, 0),   # 7:00 a.m.
     (12, 0),  # 12:00 p.m.
     (16, 30)  # 4:30 p.m.
 ]
 
-UMBRAL_CAMBIO_BRUSCO = 0.10  # 10% de variación en la cuota para forzar aviso extra
+UMBRAL_CAMBIO_BRUSCO = 0.10  # 10% de variación para alerta de volatilidad
 
 def enviar_telegram(mensaje):
     if not TOKEN:
@@ -51,6 +60,40 @@ def enviar_telegram(mensaje):
         print(f"❌ Error enviando a Telegram: {e}", flush=True)
         return False
 
+def obtener_analisis_gemini(local, visita, liga_nombre):
+    """Consulta a Gemini para obtener estadísticas de los últimos 5 partidos y radiografía táctica en curso."""
+    if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
+        return "<i>(Análisis de IA no disponible: Falta configurar GEMINI_API_KEY)</i>"
+    
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        prompt = (
+            f"Analiza el próximo partido de {liga_nombre}: {local} contra {visita}. "
+            "IMPORTANTE: Basate estrictamente en el rendimiento y las estadísticas de los ÚLTIMOS 5 PARTIDOS RECIENTES "
+            "de la temporada actual. Ignora por completo datos de temporadas pasadas. "
+            "Proporciona en un formato muy breve y directo (máximo 4 líneas): "
+            "1. Breve tendencia goleadora reciente de ambos. "
+            "2. Un dato clave o inercia actual (ej. córners, tarjetas o momento de forma). "
+            "3. Un veredicto táctico rápido para apuestas. "
+            "Sé conciso y ve al grano."
+        )
+        
+        # Usamos el modelo estándar con búsqueda web habilitada (Grounding) si está soportada
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                temperature=0.3,
+            )
+        )
+        if response and response.text:
+            return response.text.strip()
+    except Exception as e:
+        print(f"⚠️ Error consultando a Gemini para {local} vs {visita}: {e}", flush=True)
+    
+    return "<i>(No se pudo generar el análisis estadístico en este momento)</i>"
+
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
         print("❌ ERROR: THE_ODDS_API_KEY está vacía.", flush=True)
@@ -63,7 +106,6 @@ def obtener_partidos_liga(sport_key):
         print(f"🔍 API Response [{sport_key}] -> Status: {r.status_code}", flush=True)
         if r.status_code == 200:
             data = r.json()
-            print(f"📦 Partidos devueltos para {sport_key}: {len(data)}", flush=True)
             return data
         else:
             print(f"⚠️ Error de API en {sport_key}: {r.text}", flush=True)
@@ -80,14 +122,12 @@ def ejecutar_ciclo(es_prueba_inicial=False):
     tz = ZoneInfo("America/Mazatlan")
     hoy = datetime.now(tz).date()
 
-    total_eventos = 0
     partidos_para_aviso_previo = []
     partidos_para_reporte_hoy = []
     alertas_volatilidad = []
 
     for sport_key in LIGAS:
         eventos = obtener_partidos_liga(sport_key)
-        total_eventos += len(eventos)
         
         if eventos:
             nombre_liga_limpio = sport_key.replace("soccer_", "").replace("_", " ").title()
@@ -152,7 +192,7 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                 registro = historial_partidos[nombre_partido]
                 cuota_anterior = registro.get("ultima_cuota_1", p_1)
 
-                # CHEQUEO DE CAMBIO BRUSCO (Volatilidad de momios)
+                # 1. CHEQUEO DE VOLATILIDAD (Cambios bruscos de momios)
                 if not es_prueba_inicial and cuota_anterior > 0 and p_1 > 0:
                     cambio_porcentual = abs(p_1 - cuota_anterior) / cuota_anterior
                     if cambio_porcentual >= UMBRAL_CAMBIO_BRUSCO:
@@ -166,18 +206,23 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["ultima_cuota_1"] = p_1
 
-                # CASO A: ES EL MERO DÍA
+                # 2. CASO A: ES EL MERO DÍA (Incluye análisis estadístico de IA)
                 if dias_restantes == 0:
                     if registro["hoy_enviado"] != hoy or es_prueba_inicial:
+                        print(f"🤖 Solicitando análisis estadístico a Gemini para {local} vs {visita}...", flush=True)
+                        analisis_ia = obtener_analisis_gemini(local, visita, nombre_liga_limpio)
+                        
                         partidos_para_reporte_hoy.append(
                             f"• <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
                             f"   ⏰ <b>Hora:</b> {hora_local_str} ⚡ <b>¡JUEGA HOY!</b>\n"
-                            f"   📊 Promedio Mercado: 1({p_1}) | X({p_x}) | 2({p_2})\n"
+                            f"   📊 Promedio Mercado: 1({p_1}) | X({p_x}) | 2({p_2})\n\n"
+                            f"   📈 <b>Radiografía Reciente (Últimos 5 juegos):</b>\n"
+                            f"   {analisis_ia}\n\n"
                             f"   👉 <a href='{url_sofascore}'>Abrir Sofascore</a>"
                         )
                         registro["hoy_enviado"] = hoy
 
-                # CASO B: PARTIDO PRÓXIMO (1 a 4 días antes)
+                # 3. CASO B: PARTIDO PRÓXIMO (1 a 4 días antes)
                 elif 1 <= dias_restantes <= 4:
                     if not registro["previo_enviado"] or es_prueba_inicial:
                         partidos_para_aviso_previo.append(
@@ -188,33 +233,24 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["previo_enviado"] = str(hoy)
 
-                # Actualizar referencia de cuota en memoria
                 registro["ultima_cuota_1"] = p_1
 
         time.sleep(1)
 
-    print(f"📊 [Resumen] Avisos previos: {len(partidos_para_aviso_previo)} | Hoy: {len(partidos_para_reporte_hoy)} | Alertas volatilidad: {len(alertas_volatilidad)}", flush=True)
-
-    # 1. ENVIAR ALERTAS DE VOLATILIDAD (Si hay movimientos fuertes)
+    # ENVÍO DE REPORTES A TELEGRAM
     if alertas_volatilidad and not es_prueba_inicial:
-        msg_volatilidad = "\n\n".join(alertas_volatilidad)
-        enviar_telegram(msg_volatilidad)
+        enviar_telegram("\n\n".join(alertas_volatilidad))
 
-    # 2. ENVIAR AVISOS DE PARTIDOS PRÓXIMOS
     if partidos_para_aviso_previo and not es_prueba_inicial:
         cuerpo_previo = "\n\n".join(partidos_para_aviso_previo[:5])
-        msg_previo = f"🗓️ <b>AGENDA: PARTIDOS PRÓXIMOS</b>\n\n{cuerpo_previo}"
-        enviar_telegram(msg_previo)
+        enviar_telegram(f"🗓️ <b>AGENDA: PARTIDOS PRÓXIMOS</b>\n\n{cuerpo_previo}")
 
-    # 3. ENVIAR REPORTE DEL MERO DÍA
     if partidos_para_reporte_hoy:
         cuerpo_hoy = "\n\n".join(partidos_para_reporte_hoy)
-        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (ACTUALIZADO)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {datetime.now(tz).strftime('%H:%M')}</i>"
-        
-        reporte_msg = f"{titulo_rep}\n\n{cuerpo_hoy}"
-        enviar_telegram(reporte_msg)
+        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (IA + ESTADÍSTICAS)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {datetime.now(tz).strftime('%H:%M')}</i>"
+        enviar_telegram(f"{titulo_rep}\n\n{cuerpo_hoy}")
     elif es_prueba_inicial:
-        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Bot sincronizado con los nuevos horarios (7:00, 12:00, 16:30) y radar de volatilidad activo.")
+        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado (7:00, 12:00, 16:30) con Gemini y estadísticas recientes activo.")
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
@@ -231,7 +267,7 @@ def obtener_siguiente_ejecucion(tz):
     return min(candidatos)
 
 def monitorear():
-    print("🤖 Bot de Momios Optimizado inicializando hilo principal...", flush=True)
+    print("🤖 Bot de Momios Avanzado inicializando hilo principal...", flush=True)
     tz = ZoneInfo("America/Mazatlan")
     
     try:
@@ -247,7 +283,6 @@ def monitorear():
         horas_espera = round(segundos_espera / 3600, 2)
         
         print(f"⏳ Hora local actual: {ahora.strftime('%H:%M:%S')}. Durmiendo {horas_espera} horas hasta las {siguiente_objetivo.strftime('%H:%M')}...", flush=True)
-        
         time.sleep(segundos_espera)
         
         print(f"🌅 Ejecutando escaneo programado a las {datetime.now(tz).strftime('%H:%M:%S')}...", flush=True)
