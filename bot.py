@@ -27,7 +27,6 @@ THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 # Memoria de control inteligente y seguimiento de cuotas
-# Estructura: { "Nombre del Partido": {"previo_enviado": "...", "hoy_enviado": "...", "ultima_cuota_1": 2.10} }
 historial_partidos = {}
 
 LIGAS = [
@@ -119,7 +118,8 @@ def ejecutar_ciclo(es_prueba_inicial=False):
     print(f"🚀 Ejecutando ciclo [{tipo_ciclo}]...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
-    hoy = datetime.now(tz).date()
+    ahora_local = datetime.now(tz)
+    hoy = ahora_local.date()
 
     partidos_para_aviso_previo = []
     partidos_para_reporte_hoy = []
@@ -138,14 +138,17 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                 commence_time_str = evento.get("commence_time", "")
                 
                 try:
+                    # Conversión robusta asegurando zona horaria local de Sinaloa
                     dt_utc = datetime.fromisoformat(commence_time_str.replace("Z", "+00:00"))
                     dt_local = dt_utc.astimezone(tz)
                     fecha_partido = dt_local.date()
                     hora_local_str = dt_local.strftime("%H:%M hrs (%d/%b)")
-                except Exception:
+                except Exception as err:
+                    print(f"⚠️ Error procesando fecha para {nombre_partido}: {err}", flush=True)
                     continue
 
                 dias_restantes = (fecha_partido - hoy).days
+                # Descartamos partidos que ya pasaron de hoy (más de 3 horas de diferencia o fecha pasada)
                 if dias_restantes < 0:
                     continue
 
@@ -202,6 +205,7 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["ultima_cuota_1"] = p_1
 
+                # 1. CASO A: ES EL MERO DÍA
                 if dias_restantes == 0:
                     if registro["hoy_enviado"] != hoy or es_prueba_inicial:
                         print(f"🤖 Solicitando análisis estadístico a Gemini para {local} vs {visita}...", flush=True)
@@ -217,7 +221,8 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["hoy_enviado"] = hoy
 
-                elif 1 <= dias_restantes <= 4:
+                # 2. CASO B: PARTIDO PRÓXIMO (Ampliado de 1 hasta 5 días para no perder nada)
+                elif 1 <= dias_restantes <= 5:
                     if not registro["previo_enviado"] or es_prueba_inicial:
                         partidos_para_aviso_previo.append(
                             f"📌 <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
@@ -235,15 +240,15 @@ def ejecutar_ciclo(es_prueba_inicial=False):
         enviar_telegram("\n\n".join(alertas_volatilidad))
 
     if partidos_para_aviso_previo and not es_prueba_inicial:
-        cuerpo_previo = "\n\n".join(partidos_para_aviso_previo[:5])
+        cuerpo_previo = "\n\n".join(partidos_para_aviso_previo[:6])
         enviar_telegram(f"🗓️ <b>AGENDA: PARTIDOS PRÓXIMOS</b>\n\n{cuerpo_previo}")
 
     if partidos_para_reporte_hoy:
         cuerpo_hoy = "\n\n".join(partidos_para_reporte_hoy)
-        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (IA + ESTADÍSTICAS)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {datetime.now(tz).strftime('%H:%M')}</i>"
+        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (IA + ESTADÍSTICAS)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
         enviar_telegram(f"{titulo_rep}\n\n{cuerpo_hoy}")
     elif es_prueba_inicial:
-        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado (7:00, 12:00, 16:30) con Gemini y estadísticas recientes activo.")
+        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado con zona horaria local de Sinaloa.")
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
