@@ -56,36 +56,48 @@ def enviar_telegram(mensaje):
         return False
 
 def obtener_analisis_gemini(local, visita, liga_nombre):
+    """Consulta a Gemini con respaldo automático de modelos para evitar errores 404 futuros."""
     if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
         return "<i>(Análisis de IA no disponible: Falta configurar GEMINI_API_KEY)</i>"
     
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        prompt = (
-            f"Analiza el próximo partido de {liga_nombre}: {local} contra {visita}. "
-            "IMPORTANTE: Basate estrictamente en el rendimiento y las estadísticas de los ÚLTIMOS 5 PARTIDOS RECIENTES "
-            "de la temporada actual. Ignora por completo datos de temporadas pasadas. "
-            "Proporciona en un formato muy breve y directo (máximo 4 líneas): "
-            "1. Breve tendencia goleadora reciente de ambos. "
-            "2. Un dato clave o inercia actual (ej. córners, tarjetas o momento de forma). "
-            "3. Un veredicto táctico rápido para apuestas. "
-            "Sé conciso y ve al grano."
-        )
-        
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-                temperature=0.3,
-            )
-        )
-        if response and response.text:
-            return response.text.strip()
-    except Exception as e:
-        print(f"⚠️ Error consultando a Gemini para {local} vs {visita}: {e}", flush=True)
+    # Lista de respaldo en orden de preferencia actual de Google AI Studio
+    modelos_a_probar = [
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+        'gemini-flash'
+    ]
     
-    return "<i>(No se pudo generar el análisis estadístico en este momento)</i>"
+    prompt = (
+        f"Analiza el próximo partido de {liga_nombre}: {local} contra {visita}. "
+        "IMPORTANTE: Basate estrictamente en el rendimiento y las estadísticas de los ÚLTIMOS 5 PARTIDOS RECIENTES "
+        "de la temporada actual. Ignora por completo datos de temporadas pasadas. "
+        "Proporciona en un formato muy breve y directo (máximo 4 líneas): "
+        "1. Breve tendencia goleadora reciente de ambos. "
+        "2. Un dato clave o inercia actual (ej. córners, tarjetas o momento de forma). "
+        "3. Un veredicto táctico rápido para apuestas. "
+        "Sé conciso y ve al grano."
+    )
+    
+    for modelo in modelos_a_probar:
+        try:
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            response = client.models.generate_content(
+                model=modelo,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    temperature=0.3,
+                )
+            )
+            if response and response.text:
+                print(f"✅ Éxito consultando Gemini con el modelo: {modelo}", flush=True)
+                return response.text.strip()
+        except Exception as e:
+            print(f"⚠️ Modelo {modelo} falló para {local} vs {visita}: {e}", flush=True)
+            continue
+            
+    return "<i>(Análisis estadístico temporalmente no disponible, pero momios activos)</i>"
 
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
@@ -136,7 +148,7 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                     dt_local = dt_utc.astimezone(tz)
                     fecha_partido = dt_local.date()
                     hora_local_str = dt_local.strftime("%H:%M hrs (%d/%b)")
-                except Exception as err:
+                except Exception:
                     continue
 
                 dias_restantes = (fecha_partido - hoy).days
@@ -231,10 +243,10 @@ def ejecutar_ciclo(es_prueba_inicial=False):
 
     if partidos_para_reporte_hoy:
         cuerpo_hoy = "\n\n".join(partidos_para_reporte_hoy)
-        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (IA + ESTADÍSTICAS)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
+        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (IA BLINDADA)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
         enviar_telegram(f"{titulo_rep}\n\n{cuerpo_hoy}")
     elif es_prueba_inicial:
-        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado y modelo gemini-1.5-flash activo.")
+        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado con respaldo automático de modelos IA activo.")
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
@@ -253,7 +265,7 @@ def monitorear():
     try:
         ejecutar_ciclo(es_prueba_inicial=True)
     except Exception as e:
-        print(f"❌ Error en la prueba inicial: {e}", flush=True)
+        print(f"❌ Error crítico en la prueba inicial: {e}", flush=True)
 
     while True:
         ahora = datetime.now(tz)
@@ -267,7 +279,7 @@ def monitorear():
         try:
             ejecutar_ciclo(es_prueba_inicial=False)
         except Exception as e:
-            print(f"❌ Error en ciclo programado: {e}", flush=True)
+            print(f"❌ Error crítico en ciclo programado: {e}", flush=True)
 
 hilo_bot = threading.Thread(target=monitorear, daemon=True)
 hilo_bot.start()
