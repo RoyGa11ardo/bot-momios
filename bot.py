@@ -77,6 +77,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
             "Sé conciso y ve al grano."
         )
         
+        # Modelo actualizado recomendado por la API de Google
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
@@ -138,7 +139,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                 commence_time_str = evento.get("commence_time", "")
                 
                 try:
-                    # Conversión robusta asegurando zona horaria local de Sinaloa
                     dt_utc = datetime.fromisoformat(commence_time_str.replace("Z", "+00:00"))
                     dt_local = dt_utc.astimezone(tz)
                     fecha_partido = dt_local.date()
@@ -148,7 +148,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                     continue
 
                 dias_restantes = (fecha_partido - hoy).days
-                # Descartamos partidos que ya pasaron de hoy (más de 3 horas de diferencia o fecha pasada)
                 if dias_restantes < 0:
                     continue
 
@@ -221,7 +220,7 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["hoy_enviado"] = hoy
 
-                # 2. CASO B: PARTIDO PRÓXIMO (Ampliado de 1 hasta 5 días para no perder nada)
+                # 2. CASO B: PARTIDO PRÓXIMO
                 elif 1 <= dias_restantes <= 5:
                     if not registro["previo_enviado"] or es_prueba_inicial:
                         partidos_para_aviso_previo.append(
@@ -248,7 +247,7 @@ def ejecutar_ciclo(es_prueba_inicial=False):
         titulo_rep = "🧪 <b>REPORTE DE PRUEBA (IA + ESTADÍSTICAS)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
         enviar_telegram(f"{titulo_rep}\n\n{cuerpo_hoy}")
     elif es_prueba_inicial:
-        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado con zona horaria local de Sinaloa.")
+        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado y modelo de IA actualizado.")
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
