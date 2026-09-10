@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 import requests
 from flask import Flask
 
-# Intentar importar la librería oficial de Google GenAI
 try:
     from google import genai
     from google.genai import types
@@ -20,13 +19,11 @@ app = Flask(__name__)
 def home():
     return "Bot de Momios Avanzado con Gemini y Estadísticas Recientes Activo"
 
-# === CONFIGURACIÓN ===
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# Memoria de control inteligente y seguimiento de cuotas
 historial_partidos = {}
 
 LIGAS = [
@@ -36,14 +33,13 @@ LIGAS = [
     "soccer_germany_bundesliga"
 ]
 
-# Horarios fijos (Hora Sinaloa)
 HORARIOS_OBJETIVO = [
     (7, 0),   # 7:00 a.m.
     (12, 0),  # 12:00 p.m.
     (16, 30)  # 4:30 p.m.
 ]
 
-UMBRAL_CAMBIO_BRUSCO = 0.10  # 10% de variación para alerta de volatilidad
+UMBRAL_CAMBIO_BRUSCO = 0.10
 
 def enviar_telegram(mensaje):
     if not TOKEN:
@@ -60,7 +56,6 @@ def enviar_telegram(mensaje):
         return False
 
 def obtener_analisis_gemini(local, visita, liga_nombre):
-    """Consulta a Gemini para obtener estadísticas de los últimos 5 partidos y radiografía táctica en curso."""
     if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
         return "<i>(Análisis de IA no disponible: Falta configurar GEMINI_API_KEY)</i>"
     
@@ -77,9 +72,8 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
             "Sé conciso y ve al grano."
         )
         
-        # Modelo actualizado recomendado por la API de Google
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
@@ -104,8 +98,7 @@ def obtener_partidos_liga(sport_key):
         r = requests.get(target_url, timeout=15)
         print(f"🔍 API Response [{sport_key}] -> Status: {r.status_code}", flush=True)
         if r.status_code == 200:
-            data = r.json()
-            return data
+            return r.json()
         else:
             print(f"⚠️ Error de API en {sport_key}: {r.text}", flush=True)
             return []
@@ -144,7 +137,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                     fecha_partido = dt_local.date()
                     hora_local_str = dt_local.strftime("%H:%M hrs (%d/%b)")
                 except Exception as err:
-                    print(f"⚠️ Error procesando fecha para {nombre_partido}: {err}", flush=True)
                     continue
 
                 dias_restantes = (fecha_partido - hoy).days
@@ -155,12 +147,10 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                 cuotas_mercado = { "1": [], "X": [], "2": [] }
                 
                 for book in bookmakers:
-                    markets = book.get("markets", [])
-                    for m in markets:
+                    for m in book.get("markets", []):
                         if m.get("key") == "h2h":
-                            outcomes = m.get("outcomes", [])
                             precios = {}
-                            for out in outcomes:
+                            for out in m.get("outcomes", []):
                                 name = out.get("name")
                                 price = out.get("price")
                                 if name == local:
@@ -169,7 +159,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                                     precios["2"] = float(price)
                                 else:
                                     precios["X"] = float(price)
-                                    
                             for k, v in precios.items():
                                 if k in cuotas_mercado:
                                     cuotas_mercado[k].append(v)
@@ -204,7 +193,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["ultima_cuota_1"] = p_1
 
-                # 1. CASO A: ES EL MERO DÍA
                 if dias_restantes == 0:
                     if registro["hoy_enviado"] != hoy or es_prueba_inicial:
                         print(f"🤖 Solicitando análisis estadístico a Gemini para {local} vs {visita}...", flush=True)
@@ -220,7 +208,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                         )
                         registro["hoy_enviado"] = hoy
 
-                # 2. CASO B: PARTIDO PRÓXIMO
                 elif 1 <= dias_restantes <= 5:
                     if not registro["previo_enviado"] or es_prueba_inicial:
                         partidos_para_aviso_previo.append(
@@ -247,20 +234,16 @@ def ejecutar_ciclo(es_prueba_inicial=False):
         titulo_rep = "🧪 <b>REPORTE DE PRUEBA (IA + ESTADÍSTICAS)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
         enviar_telegram(f"{titulo_rep}\n\n{cuerpo_hoy}")
     elif es_prueba_inicial:
-        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado y modelo de IA actualizado.")
+        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado y modelo gemini-1.5-flash activo.")
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
     candidatos = []
-    
     for h, m in HORARIOS_OBJETIVO:
         objetivo_hoy = ahora.replace(hour=h, minute=m, second=0, microsecond=0)
         if objetivo_hoy > ahora:
             candidatos.append(objetivo_hoy)
-        
-        objetivo_mañana = objetivo_hoy + timedelta(days=1)
-        candidatos.append(objetivo_mañana)
-        
+        candidatos.append(objetivo_hoy + timedelta(days=1))
     return min(candidatos)
 
 def monitorear():
@@ -275,19 +258,16 @@ def monitorear():
     while True:
         ahora = datetime.now(tz)
         siguiente_objetivo = obtener_siguiente_ejecucion(tz)
-        
         segundos_espera = (siguiente_objetivo - ahora).total_seconds()
-        horas_espera = round(segundos_espera / 3600, 2)
         
-        print(f"⏳ Hora local actual: {ahora.strftime('%H:%M:%S')}. Durmiendo {horas_espera} horas hasta las {siguiente_objetivo.strftime('%H:%M')}...", flush=True)
+        print(f"⏳ Durmiendo hasta las {siguiente_objetivo.strftime('%H:%M')}...", flush=True)
         time.sleep(segundos_espera)
         
-        print(f"🌅 Ejecutando escaneo programado a las {datetime.now(tz).strftime('%H:%M:%S')}...", flush=True)
+        print(f"🌅 Ejecutando escaneo programado...", flush=True)
         try:
             ejecutar_ciclo(es_prueba_inicial=False)
         except Exception as e:
             print(f"❌ Error en ciclo programado: {e}", flush=True)
-        print("💤 Ciclo finalizado.", flush=True)
 
 hilo_bot = threading.Thread(target=monitorear, daemon=True)
 hilo_bot.start()
