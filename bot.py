@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Avanzado con Gemini y Estadísticas Recientes Activo"
+    return "Bot de Momios Avanzado con Gemini 3.6 y Estadísticas Activo"
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
@@ -56,17 +56,9 @@ def enviar_telegram(mensaje):
         return False
 
 def obtener_analisis_gemini(local, visita, liga_nombre):
-    """Consulta a Gemini con respaldo automático de modelos para evitar errores 404 futuros."""
+    """Consulta a Gemini utilizando el modelo oficial actual gemini-3.6-flash."""
     if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
         return "<i>(Análisis de IA no disponible: Falta configurar GEMINI_API_KEY)</i>"
-    
-    # Lista de respaldo en orden de preferencia actual de Google AI Studio
-    modelos_a_probar = [
-        'gemini-2.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-flash'
-    ]
     
     prompt = (
         f"Analiza el próximo partido de {liga_nombre}: {local} contra {visita}. "
@@ -79,24 +71,21 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
         "Sé conciso y ve al grano."
     )
     
-    for modelo in modelos_a_probar:
-        try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            response = client.models.generate_content(
-                model=modelo,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    temperature=0.3,
-                )
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model='gemini-3.6-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
             )
-            if response and response.text:
-                print(f"✅ Éxito consultando Gemini con el modelo: {modelo}", flush=True)
-                return response.text.strip()
-        except Exception as e:
-            print(f"⚠️ Modelo {modelo} falló para {local} vs {visita}: {e}", flush=True)
-            continue
-            
+        )
+        if response and response.text:
+            print("✅ Éxito consultando Gemini con gemini-3.6-flash", flush=True)
+            return response.text.strip()
+    except Exception as e:
+        print(f"⚠️ Error consultando Gemini para {local} vs {visita}: {e}", flush=True)
+        
     return "<i>(Análisis estadístico temporalmente no disponible, pero momios activos)</i>"
 
 def obtener_partidos_liga(sport_key):
@@ -243,10 +232,10 @@ def ejecutar_ciclo(es_prueba_inicial=False):
 
     if partidos_para_reporte_hoy:
         cuerpo_hoy = "\n\n".join(partidos_para_reporte_hoy)
-        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (IA BLINDADA)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
+        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (GEMINI 3.6)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
         enviar_telegram(f"{titulo_rep}\n\n{cuerpo_hoy}")
     elif es_prueba_inicial:
-        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado con respaldo automático de modelos IA activo.")
+        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado con gemini-3.6-flash.")
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
