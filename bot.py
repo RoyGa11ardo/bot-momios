@@ -30,7 +30,8 @@ LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_spain_la_liga",
     "soccer_epl",
-    "soccer_germany_bundesliga"
+    "soccer_germany_bundesliga",
+    "soccer_netherlands_eredivisie"
 ]
 
 HORARIOS_OBJETIVO = [
