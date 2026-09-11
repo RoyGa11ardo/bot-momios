@@ -190,7 +190,7 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                             f"⚠️ <b>¡MOVIMIENTO BRUSCO EN MOMIOS!</b>\n"
                             f"• <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
                             f"   ⏰ <b>Partido:</b> {hora_local_str}\n"
-                            f"   📊 Cuota anterior: {cuota_anterior} ➔ Nueva: <b>{p_1}</b> ({direccion} {round(cambio_porcentual*100, 1)}%)\n"
+                            f"   📊 <b>Cuota Local ({local}):</b> {cuota_anterior} ➔ <b>{p_1}</b> ({direccion} {round(cambio_porcentual*100, 1)}%)\n"
                             f"   👉 <a href='{url_sofascore}'>Revisar en Sofascore</a>"
                         )
                         registro["ultima_cuota_1"] = p_1
@@ -227,16 +227,22 @@ def ejecutar_ciclo(es_prueba_inicial=False):
     if alertas_volatilidad and not es_prueba_inicial:
         enviar_telegram("\n\n".join(alertas_volatilidad))
 
-    if partidos_para_aviso_previo and not es_prueba_inicial:
-        cuerpo_previo = "\n\n".join(partidos_para_aviso_previo[:6])
-        enviar_telegram(f"🗓️ <b>AGENDA: PARTIDOS PRÓXIMOS</b>\n\n{cuerpo_previo}")
+    # Construcción de mensaje unificado o priorizado para el reporte periódico
+    cuerpo_mensaje_total = []
 
     if partidos_para_reporte_hoy:
-        cuerpo_hoy = "\n\n".join(partidos_para_reporte_hoy)
-        titulo_rep = "🧪 <b>REPORTE DE PRUEBA (GEMINI 3.6)</b>" if es_prueba_inicial else f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
-        enviar_telegram(f"{titulo_rep}\n\n{cuerpo_hoy}")
+        cuerpo_mensaje_total.append("🔥 <b>PARTIDOS DE HOY (CON ANÁLISIS DE IA)</b>\n\n" + "\n\n".join(partidos_para_reporte_hoy))
+
+    if partidos_para_aviso_previo:
+        cuerpo_previo = "\n\n".join(partidos_para_aviso_previo[:6])
+        cuerpo_mensaje_total.append("🗓️ <b>AGENDA: PARTIDOS PRÓXIMOS</b>\n\n" + cuerpo_previo)
+
+    if cuerpo_mensaje_total and not es_prueba_inicial:
+        titulo_rep = f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
+        enviar_telegram(f"{titulo_rep}\n\n" + "\n\n━━━━━━━━━━━━━━━\n\n".join(cuerpo_mensaje_total))
     elif es_prueba_inicial:
-        enviar_telegram("ℹ️ <b>REPORTE DE PRUEBA:</b> Sistema sincronizado con gemini-3.6-flash.")
+        cuerpo_prueba = "\n\n━━━━━━━━━━━━━━━\n\n".join(cuerpo_mensaje_total) if cuerpo_mensaje_total else "ℹ️ <i>No hay partidos detectados en el rango actual.</i>"
+        enviar_telegram(f"🧪 <b>REPORTE DE PRUEBA (CONFIGURACIÓN ACTUALIZADA)</b>\n\n{cuerpo_prueba}")
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
