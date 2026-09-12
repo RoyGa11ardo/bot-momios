@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Avanzado con Gemini 3.6 y Estadísticas Activo"
+    return "Bot de Momios Avanzado con Análisis Amplio y Patrones Activo"
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
@@ -42,6 +42,20 @@ HORARIOS_OBJETIVO = [
 
 UMBRAL_CAMBIO_BRUSCO = 0.10
 
+# Lista de referencia para darles prioridad visual (estrellita), pero NO exclusiva
+EQUIPOS_TOP = [
+    "barcelona", "real madrid", "atletico madrid", "atlético de madrid",
+    "manchester city", "arsenal", "liverpool", "manchester united", "chelsea", "tottenham",
+    "bayern munich", "bayern münchen", "borussia dortmund", "leverkusen",
+    "juventus", "inter", "ac milan", "napoli", "roma", "atalanta",
+    "psg", "ajax", "psv", "feyenoord",
+    "america", "américa", "chivas", "cruz azul", "pumas", "tigres", "rayados", "monterrey"
+]
+
+def es_equipo_top(local, visita):
+    texto = f"{local} {visita}".lower()
+    return any(top in texto for top in EQUIPOS_TOP)
+
 def enviar_telegram(mensaje):
     if not TOKEN:
         print("❌ ERROR: TELEGRAM_TOKEN no está configurado.", flush=True)
@@ -62,13 +76,13 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
         return "<i>(Análisis de IA no disponible: Falta configurar GEMINI_API_KEY)</i>"
     
     prompt = (
-        f"Analiza el próximo partido de {liga_nombre}: {local} contra {visita}. "
+        f"Analiza el siguiente partido de {liga_nombre}: {local} contra {visita}. "
         "IMPORTANTE: Basate estrictamente en el rendimiento y las estadísticas de los ÚLTIMOS 5 PARTIDOS RECIENTES "
         "de la temporada actual. Ignora por completo datos de temporadas pasadas. "
         "Proporciona en un formato muy breve y directo (máximo 4 líneas): "
         "1. Breve tendencia goleadora reciente de ambos. "
-        "2. Un dato clave o inercia actual (ej. córners, tarjetas o momento de forma). "
-        "3. Un veredicto táctico rápido para apuestas. "
+        "2. Un patrón claro o dato clave que indique si hay una apuesta segura (ej. dominio de posesión, inercia clara o rachas). "
+        "3. Un veredicto táctico rápido y conservador. "
         "Sé conciso y ve al grano."
     )
     
@@ -82,7 +96,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
             )
         )
         if response and response.text:
-            print("✅ Éxito consultando Gemini con gemini-3.6-flash", flush=True)
+            print(f"✅ Éxito consultando Gemini para {local} vs {visita}", flush=True)
             return response.text.strip()
     except Exception as e:
         print(f"⚠️ Error consultando Gemini para {local} vs {visita}: {e}", flush=True)
@@ -111,7 +125,7 @@ def obtener_partidos_liga(sport_key):
 def ejecutar_ciclo(es_prueba_inicial=False):
     global historial_partidos
     tipo_ciclo = "PRUEBA DE INICIO" if es_prueba_inicial else "PROGRAMADO"
-    print(f"🚀 Ejecutando ciclo [{tipo_ciclo}]...", flush=True)
+    print(f"🚀 Ejecutando ciclo [{tipo_ciclo}] analizando todas las opciones...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
     ahora_local = datetime.now(tz)
@@ -139,6 +153,9 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                     fecha_partido = dt_local.date()
                     hora_local_str = dt_local.strftime("%H:%M hrs (%d/%b)")
                 except Exception:
+                    continue
+
+                if dt_local <= ahora_local:
                     continue
 
                 dias_restantes = (fecha_partido - hoy).days
@@ -181,41 +198,59 @@ def ejecutar_ciclo(es_prueba_inicial=False):
 
                 registro = historial_partidos[nombre_partido]
                 cuota_anterior = registro.get("ultima_cuota_1", p_1)
+                is_top = es_equipo_top(local, visita)
 
+                # Alerta de volatilidad para CUALQUIER partido con movimiento fuerte
                 if not es_prueba_inicial and cuota_anterior > 0 and p_1 > 0:
                     cambio_porcentual = abs(p_1 - cuota_anterior) / cuota_anterior
                     if cambio_porcentual >= UMBRAL_CAMBIO_BRUSCO:
                         direccion = "📈 SUBIÓ" if p_1 > cuota_anterior else "📉 BAJÓ"
+                        print(f"🤖 Solicitando contexto a Gemini por cambio brusco en {local} vs {visita}...", flush=True)
+                        contexto_ia = obtener_analisis_gemini(local, visita, nombre_liga_limpio)
+                        
+                        etiqueta_alerta = "⭐ <b>¡MOVIMIENTO EN EQUIPO TOP!</b>" if is_top else "⚠️ <b>¡MOVIMIENTO BRUSCO EN MOMIOS!</b>"
                         alertas_volatilidad.append(
-                            f"⚠️ <b>¡MOVIMIENTO BRUSCO EN MOMIOS!</b>\n"
+                            f"{etiqueta_alerta}\n"
                             f"• <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
                             f"   ⏰ <b>Partido:</b> {hora_local_str}\n"
-                            f"   📊 <b>Cuota Local ({local}):</b> {cuota_anterior} ➔ <b>{p_1}</b> ({direccion} {round(cambio_porcentual*100, 1)}%)\n"
+                            f"   📊 <b>Cuota Local ({local}):</b> {cuota_anterior} ➔ <b>{p_1}</b> ({direccion} {round(cambio_porcentual*100, 1)}%)\n\n"
+                            f"   🧠 <b>Contexto de la IA sobre el cambio:</b>\n"
+                            f"   {contexto_ia}\n\n"
                             f"   👉 <a href='{url_sofascore}'>Revisar en Sofascore</a>"
                         )
                         registro["ultima_cuota_1"] = p_1
 
+                # REPORTE DE HOY (Abierto a todos, priorizando visualmente a los Top o con patrones claros)
                 if dias_restantes == 0:
                     if registro["hoy_enviado"] != hoy or es_prueba_inicial:
-                        print(f"🤖 Solicitando análisis estadístico a Gemini para {local} vs {visita}...", flush=True)
+                        print(f"🤖 Analizando partido de HOY: {local} vs {visita}...", flush=True)
                         analisis_ia = obtener_analisis_gemini(local, visita, nombre_liga_limpio)
                         
+                        etiqueta = "⭐ <b>[DESTACADO / EQUIPO TOP]</b>\n" if is_top else ""
                         partidos_para_reporte_hoy.append(
-                            f"• <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
+                            f"{etiqueta}• <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
                             f"   ⏰ <b>Hora:</b> {hora_local_str} ⚡ <b>¡JUEGA HOY!</b>\n"
                             f"   📊 Promedio Mercado: 1({p_1}) | X({p_x}) | 2({p_2})\n\n"
-                            f"   📈 <b>Radiografía Reciente (Últimos 5 juegos):</b>\n"
+                            f"   📈 <b>Patrones y Radiografía Reciente:</b>\n"
                             f"   {analisis_ia}\n\n"
                             f"   👉 <a href='{url_sofascore}'>Abrir Sofascore</a>"
                         )
                         registro["hoy_enviado"] = hoy
 
+                # PARTIDOS PRÓXIMOS (Abierto a más equipos de la liga, no solo top)
                 elif 1 <= dias_restantes <= 5:
                     if not registro["previo_enviado"] or es_prueba_inicial:
+                        # Permitimos evaluar próximos, manteniendo un límite prudente para no saturar
+                        print(f"🤖 Analizando próximo: {local} vs {visita}...", flush=True)
+                        analisis_ia = obtener_analisis_gemini(local, visita, nombre_liga_limpio)
+                        
+                        etiqueta = "⭐ " if is_top else "📌 "
                         partidos_para_aviso_previo.append(
-                            f"📌 <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
+                            f"{etiqueta}<b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
                             f"   📅 <b>Fecha:</b> {hora_local_str} (En {dias_restantes} días)\n"
-                            f"   📊 Promedio Mercado: 1({p_1}) | X({p_x}) | 2({p_2})\n"
+                            f"   📊 Promedio Mercado: 1({p_1}) | X({p_x}) | 2({p_2})\n\n"
+                            f"   📈 <b>Patrones Previos de IA:</b>\n"
+                            f"   {analisis_ia}\n\n"
                             f"   👉 <a href='{url_sofascore}'>Abrir Sofascore</a>"
                         )
                         registro["previo_enviado"] = str(hoy)
@@ -227,22 +262,22 @@ def ejecutar_ciclo(es_prueba_inicial=False):
     if alertas_volatilidad and not es_prueba_inicial:
         enviar_telegram("\n\n".join(alertas_volatilidad))
 
-    # Construcción de mensaje unificado o priorizado para el reporte periódico
     cuerpo_mensaje_total = []
 
     if partidos_para_reporte_hoy:
-        cuerpo_mensaje_total.append("🔥 <b>PARTIDOS DE HOY (CON ANÁLISIS DE IA)</b>\n\n" + "\n\n".join(partidos_para_reporte_hoy))
+        cuerpo_mensaje_total.append("🔥 <b>PARTIDOS DE HOY (ANÁLISIS GENERAL Y PATRONES)</b>\n\n" + "\n\n".join(partidos_para_reporte_hoy))
 
     if partidos_para_aviso_previo:
-        cuerpo_previo = "\n\n".join(partidos_para_aviso_previo[:6])
-        cuerpo_mensaje_total.append("🗓️ <b>AGENDA: PARTIDOS PRÓXIMOS</b>\n\n" + cuerpo_previo)
+        # Mostramos una selección variada de próximos
+        cuerpo_previo = "\n\n".join(partidos_para_aviso_previo[:4])
+        cuerpo_mensaje_total.append("🗓️ <b>AGENDA: PRÓXIMOS PARTIDOS</b>\n\n" + cuerpo_previo)
 
     if cuerpo_mensaje_total and not es_prueba_inicial:
         titulo_rep = f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
         enviar_telegram(f"{titulo_rep}\n\n" + "\n\n━━━━━━━━━━━━━━━\n\n".join(cuerpo_mensaje_total))
     elif es_prueba_inicial:
         cuerpo_prueba = "\n\n━━━━━━━━━━━━━━━\n\n".join(cuerpo_mensaje_total) if cuerpo_mensaje_total else "ℹ️ <i>No hay partidos detectados en el rango actual.</i>"
-        enviar_telegram(f"🧪 <b>REPORTE DE PRUEBA (CONFIGURACIÓN ACTUALIZADA)</b>\n\n{cuerpo_prueba}")
+        enviar_telegram(f"🧪 <b>REPORTE DE PRUEBA (ANÁLISIS ABIERTO ACTIVO)</b>\n\n{cuerpo_prueba}")
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
