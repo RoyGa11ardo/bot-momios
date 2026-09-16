@@ -24,7 +24,6 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# Las 8 ligas seleccionadas (8 x 2 revisiones = 16 peticiones/día -> ~480 al mes)
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_spain_la_liga",
@@ -69,7 +68,6 @@ def enviar_telegram(mensaje):
         return False
 
 def obtener_analisis_gemini(local, visita, liga_nombre):
-    """Genera el resumen y análisis táctico del partido para el reporte."""
     if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
         return "<i>(Análisis de IA no disponible)</i>"
     
@@ -85,7 +83,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.3)
         )
-        time.sleep(4) # Pausa estricta anti-error 429
+        time.sleep(4)
         if response and response.text:
             return response.text.strip()
     except Exception as e:
@@ -101,14 +99,17 @@ def obtener_partidos_liga(sport_key):
     try:
         r = requests.get(target_url, timeout=15)
         if r.status_code == 200:
-            return r.json()
+            data = r.json()
+            print(f"📥 {sport_key}: {len(data)} eventos encontrados en API.", flush=True)
+            return data
+        print(f"⚠️ {sport_key} respondió status {r.status_code}", flush=True)
         return []
     except Exception as e:
         print(f"❌ Error consultando The Odds API para {sport_key}: {e}", flush=True)
         return []
 
 def ejecutar_ciclo():
-    print(f"🚀 Ejecutando escaneo directo de las 8 ligas...", flush=True)
+    print(f"🚀 Ejecutando escaneo ampliado (7 días) de las 8 ligas...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
     ahora_local = datetime.now(tz)
@@ -116,7 +117,7 @@ def ejecutar_ciclo():
 
     partidos_para_reporte = []
     llamadas_ia = 0
-    LIMITE_IA = 2 # Máximo 2 análisis profundos por ejecución
+    LIMITE_IA = 2
 
     for sport_key in LIGAS:
         eventos = obtener_partidos_liga(sport_key)
@@ -139,7 +140,8 @@ def ejecutar_ciclo():
                 continue
 
             dias_restantes = (fecha_partido - hoy).days
-            if dias_restantes < 0 or dias_restantes > 3:
+            # AMPLIADO A 7 DÍAS para capturar toda la semana de partidos por venir
+            if dias_restantes < 0 or dias_restantes > 7:
                 continue
 
             bookmakers = evento.get("bookmakers", [])
@@ -183,17 +185,17 @@ def ejecutar_ciclo():
                 f"   🤖 {analisis_ia}"
             )
 
-            if len(partidos_para_reporte) >= 5:
+            if len(partidos_para_reporte) >= 6:
                 break
-        if len(partidos_para_reporte) >= 5:
+        if len(partidos_para_reporte) >= 6:
             break
 
-    titulo = f"⚽ <b>REPORTE DE MOMIOS (8 LIGAS)</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
+    titulo = f"⚽ <b>REPORTE DE MOMIOS (7 DÍAS)</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
     
     if partidos_para_reporte:
         mensaje_final = titulo + "\n\n━━━━━━━━━━━━━━━\n\n".join(partidos_para_reporte)
     else:
-        mensaje_final = titulo + "ℹ️ <i>No se encontraron partidos próximos en las siguientes 72 horas para tus ligas seleccionadas. El bot sigue en guardia.</i>"
+        mensaje_final = titulo + "ℹ️ <i>No se encontraron partidos próximos en los siguientes 7 días para tus ligas seleccionadas.</i>"
 
     enviar_telegram(mensaje_final)
 
