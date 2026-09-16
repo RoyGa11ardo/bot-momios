@@ -17,21 +17,18 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Avanzado con Control de Cuotas y Límites Activo"
+    return "Bot de Momios Avanzado Activo"
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-historial_partidos = {}
-
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_spain_la_liga",
     "soccer_epl",
-    "soccer_germany_bundesliga",
-    "soccer_netherlands_eredivisie"
+    "soccer_germany_bundesliga"
 ]
 
 HORARIOS_OBJETIVO = [
@@ -40,14 +37,12 @@ HORARIOS_OBJETIVO = [
     (16, 30)  # 4:30 p.m.
 ]
 
-UMBRAL_CAMBIO_BRUSCO = 0.10
-
 EQUIPOS_TOP = [
     "barcelona", "real madrid", "atletico madrid", "atlético de madrid",
-    "manchester city", "arsenal", "liverpool", "manchester united", "chelsea", "tottenham",
+    "manchester city", "arsenal", "liverpool", "manchester united", "chelsea",
     "bayern munich", "bayern münchen", "borussia dortmund", "leverkusen",
-    "juventus", "inter", "ac milan", "napoli", "roma", "atalanta",
-    "psg", "ajax", "psv", "feyenoord",
+    "juventus", "inter", "ac milan", "napoli",
+    "psg", "ajax", "psv",
     "america", "américa", "chivas", "cruz azul", "pumas", "tigres", "rayados", "monterrey"
 ]
 
@@ -63,41 +58,36 @@ def enviar_telegram(mensaje):
     payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML", "disable_web_page_preview": True}
     try:
         r = requests.post(url, json=payload, timeout=10)
+        print(f"📤 Respuesta de Telegram status_code: {r.status_code}", flush=True)
         return r.status_code == 200
     except Exception as e:
         print(f"❌ Error enviando a Telegram: {e}", flush=True)
         return False
 
 def obtener_analisis_gemini(local, visita, liga_nombre):
-    """Consulta a Gemini con manejo de pausas para evitar errores 429."""
     if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
-        return "<i>(Análisis de IA no disponible: Falta configurar GEMINI_API_KEY)</i>"
+        return "<i>(Análisis de IA no disponible)</i>"
     
     prompt = (
-        f"Analiza el siguiente partido de {liga_nombre}: {local} contra {visita}. "
-        "Basate estrictamente en el rendimiento y las estadísticas de los ÚLTIMOS 5 PARTIDOS RECIENTES. "
-        "Proporciona en un formato muy breve y directo (máximo 3 líneas): "
-        "1. Tendencia goleadora reciente. "
-        "2. Patrón o dato clave para apuesta. "
-        "3. Veredicto rápido."
+        f"Analiza brevemente el partido de {liga_nombre}: {local} contra {visita}. "
+        "Da en máximo 2 líneas una tendencia clave o recomendación directa basada en rendimiento reciente."
     )
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model='gemini-3.6-flash',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.3)
         )
-        # Pausa de cortesía para respetar los límites gratuitos de la API por minuto
-        time.sleep(5)
+        time.sleep(4) # Pausa estricta anti-error 429
         if response and response.text:
             return response.text.strip()
     except Exception as e:
-        print(f"⚠️ Límite de IA alcanzado o error en {local} vs {visita}: {e}", flush=True)
-        time.sleep(10) # Pausa larga si salta el error
+        print(f"⚠️ Error en IA para {local} vs {visita}: {e}", flush=True)
+        time.sleep(5)
         
-    return "<i>(Análisis omitido temporalmente por protección de cuota de la API)</i>"
+    return "<i>(Análisis omitido por protección de cuota)</i>"
 
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
@@ -108,25 +98,20 @@ def obtener_partidos_liga(sport_key):
         if r.status_code == 200:
             return r.json()
         return []
-    except Exception:
+    except Exception as e:
+        print(f"❌ Error consultando The Odds API para {sport_key}: {e}", flush=True)
         return []
 
-def ejecutar_ciclo(es_prueba_inicial=False):
-    global historial_partidos
-    tipo_ciclo = "PRUEBA DE INICIO" if es_prueba_inicial else "PROGRAMADO"
-    print(f"🚀 Ejecutando ciclo [{tipo_ciclo}] con control inteligente de cuota...", flush=True)
+def ejecutar_ciclo():
+    print(f"🚀 Ejecutando escaneo y análisis de partidos...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
     ahora_local = datetime.now(tz)
     hoy = ahora_local.date()
 
-    partidos_para_reporte_hoy = []
-    partidos_para_aviso_previo = []
-    alertas_volatilidad = []
-
-    # Contador para gastar IA con moderación en el plan gratuito (máximo 4 llamadas por ejecución)
-    llamadas_ia_realizadas = 0
-    LIMITE_IA_POR_CICLO = 3
+    partidos_para_reporte = []
+    llamadas_ia = 0
+    LIMITE_IA = 2 # Máximo 2 llamadas por ejecución para blindaje total
 
     for sport_key in LIGAS:
         eventos = obtener_partidos_liga(sport_key)
@@ -138,7 +123,6 @@ def ejecutar_ciclo(es_prueba_inicial=False):
         for evento in eventos:
             local = evento.get("home_team")
             visita = evento.get("away_team")
-            nombre_partido = f"{local} vs {visita}"
             commence_time_str = evento.get("commence_time", "")
             
             try:
@@ -149,15 +133,13 @@ def ejecutar_ciclo(es_prueba_inicial=False):
             except Exception:
                 continue
 
-            if dt_local <= ahora_local:
-                continue
-
+            # Tomar en cuenta partidos de hoy y de los próximos 3 días
             dias_restantes = (fecha_partido - hoy).days
-            if dias_restantes < 0:
+            if dias_restantes < 0 or dias_restantes > 3:
                 continue
 
             bookmakers = evento.get("bookmakers", [])
-            cuotas_mercado = { "1": [], "X": [], "2": [] }
+            p_1, p_x, p_2 = 0, 0, 0
             
             for book in bookmakers:
                 for m in book.get("markets", []):
@@ -172,77 +154,48 @@ def ejecutar_ciclo(es_prueba_inicial=False):
                                 precios["2"] = float(price)
                             else:
                                 precios["X"] = float(price)
-                        for k, v in precios.items():
-                            if k in cuotas_mercado:
-                                cuotas_mercado[k].append(v)
+                        if "1" in precios: p_1 = precios["1"]
+                        if "X" in precios: p_x = precios["X"]
+                        if "2" in precios: p_2 = precios["2"]
+                        break
+                if p_1 > 0:
+                    break
 
-            promedios_ref = {k: (sum(v)/len(v)) for k, v in cuotas_mercado.items() if v}
-            p_1 = round(promedios_ref.get("1", 0), 2) if promedios_ref.get("1") else 0
-            p_x = round(promedios_ref.get("X", 0), 2) if promedios_ref.get("X") else 0
-            p_2 = round(promedios_ref.get("2", 0), 2) if promedios_ref.get("2") else 0
-
-            url_sofascore = "https://www.sofascore.com"
-
-            if nombre_partido not in historial_partidos:
-                historial_partidos[nombre_partido] = {
-                    "previo_enviado": None, 
-                    "hoy_enviado": None, 
-                    "ultima_cuota_1": p_1
-                }
-
-            registro = historial_partidos[nombre_partido]
             is_top = es_equipo_top(local, visita)
+            analisis_ia = "<i>(Momios de mercado listados)</i>"
 
-            # Decidir si consultamos a la IA (Solo si es Top o si tenemos cupo disponible)
-            analisis_ia = "<i>(Momios analizados por mercado - IA reservada para partidos clave)</i>"
-            if (is_top or dias_restantes == 0) and llamadas_ia_realizadas < LIMITE_IA_POR_CICLO:
-                print(f"🤖 Consultando IA para: {local} vs {visita}...", flush=True)
+            # Consultar IA solo si hay cupo y es relevante
+            if (is_top or dias_restantes == 0) and llamadas_ia < LIMITE_IA:
                 analisis_ia = obtener_analisis_gemini(local, visita, nombre_liga_limpio)
-                llamadas_ia_realizadas += 1
+                llamadas_ia += 1
 
-            # REPORTE DE HOY
-            if dias_restantes == 0:
-                if registro["hoy_enviado"] != hoy or es_prueba_inicial:
-                    etiqueta = "⭐ <b>[DESTACADO / EQUIPO TOP]</b>\n" if is_top else "⚽ "
-                    partidos_para_reporte_hoy.append(
-                        f"{etiqueta}• <b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
-                        f"   ⏰ <b>Hora:</b> {hora_local_str} ⚡ <b>¡JUEGA HOY!</b>\n"
-                        f"   📊 Promedio Mercado: 1({p_1}) | X({p_x}) | 2({p_2})\n\n"
-                        f"   📈 <b>Radiografía / Patrón:</b>\n"
-                        f"   {analisis_ia}\n\n"
-                        f"   👉 <a href='{url_sofascore}'>Abrir Sofascore</a>"
-                    )
-                    registro["hoy_enviado"] = hoy
+            etiqueta = "🔥 <b>[HOY]</b> " if dias_restantes == 0 else f"📅 <b>[En {dias_restantes} días]</b> "
+            if is_top:
+                etiqueta += "⭐ "
 
-            # PRÓXIMOS PARTIDOS
-            elif 1 <= dias_restantes <= 5:
-                if not registro["previo_enviado"] or es_prueba_inicial:
-                    etiqueta = "⭐ " if is_top else "📌 "
-                    partidos_para_aviso_previo.append(
-                        f"{etiqueta}<b>{local} vs {visita}</b> <i>({nombre_liga_limpio})</i>\n"
-                        f"   📅 <b>Fecha:</b> {hora_local_str} (En {dias_restantes} días)\n"
-                        f"   📊 Promedio Mercado: 1({p_1}) | X({p_x}) | 2({p_2})\n\n"
-                        f"   👉 <a href='{url_sofascore}'>Abrir Sofascore</a>"
-                    )
-                    registro["previo_enviado"] = str(hoy)
+            partidos_para_reporte.append(
+                f"{etiqueta}<b>{local} vs {visita}</b>\n"
+                f"   🏆 <i>{nombre_liga_limpio}</i> | ⏰ {hora_local_str}\n"
+                f"   📊 Momios: 1({p_1}) | X({p_x}) | 2({p_2})\n"
+                f"   🤖 {analisis_ia}"
+            )
 
-            registro["ultima_cuota_1"] = p_1
+            # Limitar a máximo 5 partidos por reporte para no saturar Telegram
+            if len(partidos_para_reporte) >= 5:
+                break
+        if len(partidos_para_reporte) >= 5:
+            print("ℹ️ Límite de partidos por reporte alcanzado (5 máx).", flush=True)
+            break
 
-    cuerpo_mensaje_total = []
+    # ENVÍO OBLIGATORIO A TELEGRAM
+    titulo = f"⚽ <b>REPORTE DE MOMIOS</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
+    
+    if partidos_para_reporte:
+        mensaje_final = titulo + "\n\n━━━━━━━━━━━━━━━\n\n".join(partidos_para_reporte)
+    else:
+        mensaje_final = titulo + "ℹ️ <i>No se encontraron partidos próximos en las ligas configuradas para las siguientes 72 horas. El bot sigue activo vigilando el mercado.</i>"
 
-    if partidos_para_reporte_hoy:
-        cuerpo_mensaje_total.append("🔥 <b>PARTIDOS DE HOY</b>\n\n" + "\n\n".join(partidos_para_reporte_hoy))
-
-    if partidos_para_aviso_previo:
-        cuerpo_previo = "\n\n".join(partidos_para_aviso_previo[:4])
-        cuerpo_mensaje_total.append("🗓️ <b>PRÓXIMOS ENCUENTROS</b>\n\n" + cuerpo_previo)
-
-    if cuerpo_mensaje_total and not es_prueba_inicial:
-        titulo_rep = f"📊 <b>REPORTE DEL DÍA</b>\n<i>Hora local Sinaloa: {ahora_local.strftime('%H:%M')}</i>"
-        enviar_telegram(f"{titulo_rep}\n\n" + "\n\n━━━━━━━━━━━━━━━\n\n".join(cuerpo_mensaje_total))
-    elif es_prueba_inicial:
-        cuerpo_prueba = "\n\n━━━━━━━━━━━━━━━\n\n".join(cuerpo_mensaje_total) if cuerpo_mensaje_total else "ℹ️ <i>No hay partidos detectados en el rango actual.</i>"
-        enviar_telegram(f"🧪 <b>REPORTE DE PRUEBA (CONTROL DE CUOTAS ACTIVO)</b>\n\n{cuerpo_prueba}")
+    enviar_telegram(mensaje_final)
 
 def obtener_siguiente_ejecucion(tz):
     ahora = datetime.now(tz)
@@ -255,13 +208,15 @@ def obtener_siguiente_ejecucion(tz):
     return min(candidatos)
 
 def monitorear():
-    print("🤖 Bot de Momios Avanzado inicializando hilo principal...", flush=True)
+    print("🤖 Bot de Momios iniciado correctamente...", flush=True)
     tz = ZoneInfo("America/Mazatlan")
     
+    # Ejecutar una prueba inmediata al arrancar para confirmar que Telegram recibe
     try:
-        ejecutar_ciclo(es_prueba_inicial=True)
+        print("🧪 Ejecutando prueba de inicio y envío a Telegram...", flush=True)
+        ejecutar_ciclo()
     except Exception as e:
-        print(f"❌ Error crítico en la prueba inicial: {e}", flush=True)
+        print(f"❌ Error en la prueba inicial: {e}", flush=True)
 
     while True:
         ahora = datetime.now(tz)
@@ -273,7 +228,7 @@ def monitorear():
         
         print(f"🌅 Ejecutando escaneo programado...", flush=True)
         try:
-            ejecutar_ciclo(es_prueba_inicial=False)
+            ejecutar_ciclo()
         except Exception as e:
             print(f"❌ Error crítico en ciclo programado: {e}", flush=True)
 
