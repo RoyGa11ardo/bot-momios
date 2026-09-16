@@ -24,11 +24,14 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
+# Las 8 ligas seleccionadas (8 x 2 revisiones = 16 peticiones/día -> ~480 al mes)
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_spain_la_liga",
     "soccer_epl",
     "soccer_germany_bundesliga",
+    "soccer_italy_serie_a",
+    "soccer_france_ligue_one",
     "soccer_uefa_champions_league",
     "soccer_uefa_europa_league"
 ]
@@ -43,7 +46,7 @@ EQUIPOS_TOP = [
     "manchester city", "arsenal", "liverpool", "manchester united", "chelsea",
     "bayern munich", "bayern münchen", "borussia dortmund", "leverkusen",
     "juventus", "inter", "ac milan", "napoli",
-    "psg", "ajax", "psv",
+    "psg", "paris saint-germain", "ajax", "psv",
     "america", "américa", "chivas", "cruz azul", "pumas", "tigres", "rayados", "monterrey"
 ]
 
@@ -64,29 +67,6 @@ def enviar_telegram(mensaje):
     except Exception as e:
         print(f"❌ Error enviando a Telegram: {e}", flush=True)
         return False
-
-def consultar_agenda_gemini():
-    """Usa Gemini como filtro rápido para saber si hay partidos esta semana y ahorrar cuota."""
-    if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
-        return True # Si no hay IA, por defecto dejamos que la API revise normal
-    
-    prompt = (
-        "Responde únicamente con la palabra SÍ o NO. ¿Hay partidos programados en los próximos 3 días "
-        "para la Liga MX, La Liga española, Premier League, Bundesliga o competiciones europeas (Champions/Europa League)?"
-    )
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.0)
-        )
-        texto = response.text.strip().upper()
-        print(f"🤖 Filtro de agenda Gemini respondió: {texto}", flush=True)
-        return "NO" not in texto
-    except Exception as e:
-        print(f"⚠️ Error en filtro de agenda IA: {e}, procediendo por seguridad.", flush=True)
-        return True
 
 def obtener_analisis_gemini(local, visita, liga_nombre):
     """Genera el resumen y análisis táctico del partido para el reporte."""
@@ -128,98 +108,92 @@ def obtener_partidos_liga(sport_key):
         return []
 
 def ejecutar_ciclo():
-    print(f"🚀 Ejecutando ciclo con filtro inteligente de IA...", flush=True)
+    print(f"🚀 Ejecutando escaneo directo de las 8 ligas...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
     ahora_local = datetime.now(tz)
     hoy = ahora_local.date()
 
-    # Paso 1: Consultar a Gemini si vale la pena revisar la API de momios
-    hay_futbol = consultar_agenda_gemini()
-    
     partidos_para_reporte = []
-    
-    if hay_futbol:
-        llamadas_ia = 0
-        LIMITE_IA = 2 # Máximo 2 análisis profundos por ejecución
+    llamadas_ia = 0
+    LIMITE_IA = 2 # Máximo 2 análisis profundos por ejecución
 
-        for sport_key in LIGAS:
-            eventos = obtener_partidos_liga(sport_key)
-            if not eventos:
+    for sport_key in LIGAS:
+        eventos = obtener_partidos_liga(sport_key)
+        if not eventos:
+            continue
+            
+        nombre_liga_limpio = sport_key.replace("soccer_", "").replace("_", " ").title()
+
+        for evento in eventos:
+            local = evento.get("home_team")
+            visita = evento.get("away_team")
+            commence_time_str = evento.get("commence_time", "")
+            
+            try:
+                dt_utc = datetime.fromisoformat(commence_time_str.replace("Z", "+00:00"))
+                dt_local = dt_utc.astimezone(tz)
+                fecha_partido = dt_local.date()
+                hora_local_str = dt_local.strftime("%H:%M hrs (%d/%b)")
+            except Exception:
                 continue
-                
-            nombre_liga_limpio = sport_key.replace("soccer_", "").replace("_", " ").title()
 
-            for evento in eventos:
-                local = evento.get("home_team")
-                visita = evento.get("away_team")
-                commence_time_str = evento.get("commence_time", "")
-                
-                try:
-                    dt_utc = datetime.fromisoformat(commence_time_str.replace("Z", "+00:00"))
-                    dt_local = dt_utc.astimezone(tz)
-                    fecha_partido = dt_local.date()
-                    hora_local_str = dt_local.strftime("%H:%M hrs (%d/%b)")
-                except Exception:
-                    continue
+            dias_restantes = (fecha_partido - hoy).days
+            if dias_restantes < 0 or dias_restantes > 3:
+                continue
 
-                dias_restantes = (fecha_partido - hoy).days
-                if dias_restantes < 0 or dias_restantes > 3:
-                    continue
-
-                bookmakers = evento.get("bookmakers", [])
-                p_1, p_x, p_2 = 0, 0, 0
-                
-                for book in bookmakers:
-                    for m in book.get("markets", []):
-                        if m.get("key") == "h2h":
-                            precios = {}
-                            for out in m.get("outcomes", []):
-                                name = out.get("name")
-                                price = out.get("price")
-                                if name == local:
-                                    precios["1"] = float(price)
-                                elif name == visita:
-                                    precios["2"] = float(price)
-                                else:
-                                    precios["X"] = float(price)
-                            if "1" in precios: p_1 = precios["1"]
-                            if "X" in precios: p_x = precios["X"]
-                            if "2" in precios: p_2 = precios["2"]
-                            break
-                    if p_1 > 0:
+            bookmakers = evento.get("bookmakers", [])
+            p_1, p_x, p_2 = 0, 0, 0
+            
+            for book in bookmakers:
+                for m in book.get("markets", []):
+                    if m.get("key") == "h2h":
+                        precios = {}
+                        for out in m.get("outcomes", []):
+                            name = out.get("name")
+                            price = out.get("price")
+                            if name == local:
+                                precios["1"] = float(price)
+                            elif name == visita:
+                                precios["2"] = float(price)
+                            else:
+                                precios["X"] = float(price)
+                        if "1" in precios: p_1 = precios["1"]
+                        if "X" in precios: p_x = precios["X"]
+                        if "2" in precios: p_2 = precios["2"]
                         break
-
-                is_top = es_equipo_top(local, visita)
-                analisis_ia = "<i>(Momios de mercado listados)</i>"
-
-                # Paso 2: Generar el resumen de IA solo si hay cupo y es un partido relevante
-                if (is_top or dias_restantes == 0) and llamadas_ia < LIMITE_IA:
-                    analisis_ia = obtener_analisis_gemini(local, visita, nombre_liga_limpio)
-                    llamadas_ia += 1
-
-                etiqueta = "🔥 <b>[HOY]</b> " if dias_restantes == 0 else f"📅 <b>[En {dias_restantes} días]</b> "
-                if is_top:
-                    etiqueta += "⭐ "
-
-                partidos_para_reporte.append(
-                    f"{etiqueta}<b>{local} vs {visita}</b>\n"
-                    f"   🏆 <i>{nombre_liga_limpio}</i> | ⏰ {hora_local_str}\n"
-                    f"   📊 Momios: 1({p_1}) | X({p_x}) | 2({p_2})\n"
-                    f"   🤖 {analisis_ia}"
-                )
-
-                if len(partidos_para_reporte) >= 5:
+                if p_1 > 0:
                     break
+
+            is_top = es_equipo_top(local, visita)
+            analisis_ia = "<i>(Momios de mercado listados)</i>"
+
+            if (is_top or dias_restantes == 0) and llamadas_ia < LIMITE_IA:
+                analisis_ia = obtener_analisis_gemini(local, visita, nombre_liga_limpio)
+                llamadas_ia += 1
+
+            etiqueta = "🔥 <b>[HOY]</b> " if dias_restantes == 0 else f"📅 <b>[En {dias_restantes} días]</b> "
+            if is_top:
+                etiqueta += "⭐ "
+
+            partidos_para_reporte.append(
+                f"{etiqueta}<b>{local} vs {visita}</b>\n"
+                f"   🏆 <i>{nombre_liga_limpio}</i> | ⏰ {hora_local_str}\n"
+                f"   📊 Momios: 1({p_1}) | X({p_x}) | 2({p_2})\n"
+                f"   🤖 {analisis_ia}"
+            )
+
             if len(partidos_para_reporte) >= 5:
                 break
+        if len(partidos_para_reporte) >= 5:
+            break
 
-    titulo = f"⚽ <b>REPORTE DE MOMIOS CON IA</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
+    titulo = f"⚽ <b>REPORTE DE MOMIOS (8 LIGAS)</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
     
     if partidos_para_reporte:
         mensaje_final = titulo + "\n\n━━━━━━━━━━━━━━━\n\n".join(partidos_para_reporte)
     else:
-        mensaje_final = titulo + "ℹ️ <i>No hay partidos próximos detectados en las ligas seleccionadas para las siguientes 72 horas. El bot sigue en guardia.</i>"
+        mensaje_final = titulo + "ℹ️ <i>No se encontraron partidos próximos en las siguientes 72 horas para tus ligas seleccionadas. El bot sigue en guardia.</i>"
 
     enviar_telegram(mensaje_final)
 
