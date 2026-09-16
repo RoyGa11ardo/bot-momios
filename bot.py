@@ -79,7 +79,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.6-flash',
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.3)
         )
@@ -109,15 +109,13 @@ def obtener_partidos_liga(sport_key):
         return []
 
 def ejecutar_ciclo():
-    print(f"🚀 Ejecutando escaneo ampliado (7 días) de las 8 ligas...", flush=True)
+    print(f"🚀 Ejecutando escaneo inteligente con IA optimizada...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
     ahora_local = datetime.now(tz)
     hoy = ahora_local.date()
 
-    partidos_para_reporte = []
-    llamadas_ia = 0
-    LIMITE_IA = 2
+    candidatos_totales = []
 
     for sport_key in LIGAS:
         eventos = obtener_partidos_liga(sport_key)
@@ -140,7 +138,6 @@ def ejecutar_ciclo():
                 continue
 
             dias_restantes = (fecha_partido - hoy).days
-            # AMPLIADO A 7 DÍAS para capturar toda la semana de partidos por venir
             if dias_restantes < 0 or dias_restantes > 7:
                 continue
 
@@ -168,34 +165,61 @@ def ejecutar_ciclo():
                     break
 
             is_top = es_equipo_top(local, visita)
-            analisis_ia = "<i>(Momios de mercado listados)</i>"
 
-            if (is_top or dias_restantes == 0) and llamadas_ia < LIMITE_IA:
-                analisis_ia = obtener_analisis_gemini(local, visita, nombre_liga_limpio)
-                llamadas_ia += 1
+            # Sistema de puntuación: Top teams primero, luego partidos de hoy, luego por días
+            prioridad_top = 0 if is_top else 1
+            prioridad_hoy = 0 if dias_restantes == 0 else 1
+            
+            candidatos_totales.append({
+                "sort_key": (prioridad_top, prioridad_hoy, dias_restantes),
+                "local": local,
+                "visita": visita,
+                "liga": nombre_liga_limpio,
+                "hora": hora_local_str,
+                "dias": dias_restantes,
+                "p_1": p_1,
+                "p_x": p_x,
+                "p_2": p_2,
+                "is_top": is_top
+            })
 
-            etiqueta = "🔥 <b>[HOY]</b> " if dias_restantes == 0 else f"📅 <b>[En {dias_restantes} días]</b> "
-            if is_top:
-                etiqueta += "⭐ "
+    # Ordenar por relevancia global
+    candidatos_totales.sort(key=lambda x: x["sort_key"])
 
-            partidos_para_reporte.append(
-                f"{etiqueta}<b>{local} vs {visita}</b>\n"
-                f"   🏆 <i>{nombre_liga_limpio}</i> | ⏰ {hora_local_str}\n"
-                f"   📊 Momios: 1({p_1}) | X({p_x}) | 2({p_2})\n"
-                f"   🤖 {analisis_ia}"
-            )
+    partidos_para_reporte = []
+    llamadas_ia = 0
+    LIMITE_IA = 2
 
-            if len(partidos_para_reporte) >= 6:
-                break
-        if len(partidos_para_reporte) >= 6:
-            break
+    for c in candidatos_totales[:10]:
+        local = c["local"]
+        visita = c["visita"]
+        is_top = c["is_top"]
+        dias_restantes = c["dias"]
+        
+        analisis_ia = "<i>(Momios de mercado listados)</i>"
+        
+        # REGLA OPTIMIZADA: Solo se usa IA si el partido es HOY (0) o MAÑANA (1)
+        if dias_restantes <= 1 and llamadas_ia < LIMITE_IA:
+            analisis_ia = obtener_analisis_gemini(local, visita, c["liga"])
+            llamadas_ia += 1
 
-    titulo = f"⚽ <b>REPORTE DE MOMIOS (7 DÍAS)</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
+        etiqueta = "🔥 <b>[HOY]</b> " if dias_restantes == 0 else f"📅 <b>[En {dias_restantes} días]</b> "
+        if is_top:
+            etiqueta += "⭐ "
+
+        partidos_para_reporte.append(
+            f"{etiqueta}<b>{local} vs {visita}</b>\n"
+            f"   🏆 <i>{c['liga']}</i> | ⏰ {c['hora']}\n"
+            f"   📊 Momios: 1({c['p_1']}) | X({c['p_x']}) | 2({c['p_2']})\n"
+            f"   🤖 {analisis_ia}"
+        )
+
+    titulo = f"⚽ <b>REPORTE INTELIGENTE DE MOMIOS</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
     
     if partidos_para_reporte:
         mensaje_final = titulo + "\n\n━━━━━━━━━━━━━━━\n\n".join(partidos_para_reporte)
     else:
-        mensaje_final = titulo + "ℹ️ <i>No se encontraron partidos próximos en los siguientes 7 días para tus ligas seleccionadas.</i>"
+        mensaje_final = titulo + "ℹ️ <i>No se encontraron partidos próximos en los siguientes 7 días.</i>"
 
     enviar_telegram(mensaje_final)
 
