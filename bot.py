@@ -17,22 +17,21 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Avanzado Activo"
+    return "Bot de Momios Activo (Fecha FIFA + Nations League)"
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
+# ⚽ LIGAS TEMPORALES ACTUALIZADAS
 LIGAS = [
     "soccer_mexico_ligamx",
-    "soccer_spain_la_liga",
-    "soccer_epl",
-    "soccer_germany_bundesliga",
-    "soccer_italy_serie_a",
-    "soccer_france_ligue_one",
-    "soccer_uefa_champions_league",
-    "soccer_uefa_europa_league"
+    "soccer_usa_mls",
+    "soccer_england_championship",
+    "soccer_uefa_nations_league",
+    "soccer_international",
+    "soccer_concacaf_nations_league"
 ]
 
 HORARIOS_OBJETIVO = [
@@ -41,12 +40,16 @@ HORARIOS_OBJETIVO = [
 ]
 
 EQUIPOS_TOP = [
-    "barcelona", "real madrid", "atletico madrid", "atlético de madrid",
-    "manchester city", "arsenal", "liverpool", "manchester united", "chelsea",
-    "bayern munich", "bayern münchen", "borussia dortmund", "leverkusen",
-    "juventus", "inter", "ac milan", "napoli",
-    "psg", "paris saint-germain", "ajax", "psv",
-    "america", "américa", "chivas", "cruz azul", "pumas", "tigres", "rayados", "monterrey"
+    # Selecciones Nacionales Top
+    "mexico", "méxico", "argentina", "brasil", "estados unidos", "usa", 
+    "españa", "francia", "inglaterra", "alemania", "portugal", "italia", 
+    "holanda", "países bajos", "uruguay", "colombia", "belgica", "bélgica",
+    # Liga MX Top
+    "america", "américa", "chivas", "cruz azul", "pumas", "tigres", "rayados", "monterrey",
+    # MLS Top
+    "inter miami", "la galaxy", "los angeles fc", "LAFC", "columbus crew",
+    # Championship Equipos destacados
+    "leeds", "burnley", "sheffield", "west brom", "norwich", "middlesbrough"
 ]
 
 def es_equipo_top(local, visita):
@@ -58,22 +61,60 @@ def enviar_telegram(mensaje):
         print("❌ ERROR: TELEGRAM_TOKEN no está configurado.", flush=True)
         return False
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML", "disable_web_page_preview": True}
-    try:
-        r = requests.post(url, json=payload, timeout=10)
-        print(f"📤 Respuesta de Telegram status_code: {r.status_code}", flush=True)
-        return r.status_code == 200
-    except Exception as e:
-        print(f"❌ Error enviando a Telegram: {e}", flush=True)
-        return False
+    
+    if len(mensaje) > 4000:
+        bloques = mensaje.split("\n\n━━━━━━━━━━━━━━━\n\n")
+        chunk = ""
+        exito_total = True
+        for b in bloques:
+            if len(chunk) + len(b) + 18 < 4000:
+                chunk += b + "\n\n━━━━━━━━━━━━━━━\n\n"
+            else:
+                payload = {"chat_id": CHAT_ID, "text": chunk.strip(), "parse_mode": "HTML", "disable_web_page_preview": True}
+                try:
+                    r = requests.post(url, json=payload, timeout=10)
+                    if r.status_code != 200: exito_total = False
+                except Exception:
+                    exito_total = False
+                chunk = b + "\n\n━━━━━━━━━━━━━━━\n\n"
+        if chunk:
+            payload = {"chat_id": CHAT_ID, "text": chunk.strip(), "parse_mode": "HTML", "disable_web_page_preview": True}
+            try:
+                r = requests.post(url, json=payload, timeout=10)
+                if r.status_code != 200: exito_total = False
+            except Exception:
+                exito_total = False
+        return exito_total
+    else:
+        payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML", "disable_web_page_preview": True}
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            print(f"📤 Respuesta de Telegram status_code: {r.status_code}", flush=True)
+            return r.status_code == 200
+        except Exception as e:
+            print(f"❌ Error enviando a Telegram: {e}", flush=True)
+            return False
 
 def obtener_analisis_gemini(local, visita, liga_nombre):
     if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
         return "<i>(Análisis de IA no disponible)</i>"
     
     prompt = (
-        f"Analiza brevemente el partido de {liga_nombre}: {local} contra {visita}. "
-        "Da en máximo 2 líneas una tendencia clave o recomendación directa basada en rendimiento reciente."
+        f"Eres un analista experto en apuestas deportivas de fútbol profesional para {liga_nombre}. "
+        f"Vas a analizar de manera rigurosa y analítica el partido entre: {local} (Local) y {visita} (Visitante).\n\n"
+        
+        "ADVERTENCIA CRÍTICA DE VERACIDAD (CERO ALUCINACIONES):\n"
+        "- Básate estrictamente en el contexto actual de la temporada vigente.\n"
+        "- NO inventes jugadores que ya no estén convocados o en el club (verifica plantillas actuales).\n"
+        "- Considera ausencias por fecha FIFA o desgaste físico.\n\n"
+        
+        "ESTRUCTURA OBLIGATORIA DEL ANÁLISIS (Usa viñetas cortas, directas y al grano):\n"
+        "1. 📊 **Racha y Tendencia**: Análisis breve de su rendimiento reciente.\n"
+        "2. 🏥 **Bajas / Jugadores Clave**: Ausencias importantes confirmadas.\n"
+        "3. 🚩 **Promedios y Mercado**: Tendencia estimada de Córners y Tarjetas.\n"
+        "4. 🎯 **Apuesta y Stake**: Sugerencia clara de apuesta y el **Nivel de Riesgo / Stake** (Bajo, Moderado o Alto).\n\n"
+        
+        "Sé sumamente conciso, evita relleno y ve directo a los datos duros."
     )
     
     try:
@@ -81,7 +122,10 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
         response = client.models.generate_content(
             model='gemini-3.6-flash',
             contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.3)
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=450
+            )
         )
         time.sleep(4)
         if response and response.text:
@@ -109,7 +153,7 @@ def obtener_partidos_liga(sport_key):
         return []
 
 def ejecutar_ciclo():
-    print(f"🚀 Ejecutando escaneo inteligente con IA optimizada...", flush=True)
+    print(f"🚀 Ejecutando escaneo con Nations League, MX, MLS, Championship y Selecciones...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
     ahora_local = datetime.now(tz)
@@ -166,7 +210,6 @@ def ejecutar_ciclo():
 
             is_top = es_equipo_top(local, visita)
 
-            # Sistema de puntuación: Top teams primero, luego partidos de hoy, luego por días
             prioridad_top = 0 if is_top else 1
             prioridad_hoy = 0 if dias_restantes == 0 else 1
             
@@ -183,7 +226,6 @@ def ejecutar_ciclo():
                 "is_top": is_top
             })
 
-    # Ordenar por relevancia global
     candidatos_totales.sort(key=lambda x: x["sort_key"])
 
     partidos_para_reporte = []
@@ -198,7 +240,6 @@ def ejecutar_ciclo():
         
         analisis_ia = "<i>(Momios de mercado listados)</i>"
         
-        # REGLA OPTIMIZADA: Solo se usa IA si el partido es HOY (0) o MAÑANA (1)
         if dias_restantes <= 1 and llamadas_ia < LIMITE_IA:
             analisis_ia = obtener_analisis_gemini(local, visita, c["liga"])
             llamadas_ia += 1
@@ -214,7 +255,7 @@ def ejecutar_ciclo():
             f"   🤖 {analisis_ia}"
         )
 
-    titulo = f"⚽ <b>REPORTE INTELIGENTE DE MOMIOS</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
+    titulo = f"⚽ <b>REPORTE FECHA FIFA & NATIONS LEAGUE</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
     
     if partidos_para_reporte:
         mensaje_final = titulo + "\n\n━━━━━━━━━━━━━━━\n\n".join(partidos_para_reporte)
