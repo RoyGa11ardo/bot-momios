@@ -4,7 +4,7 @@ import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import requests
-from Flask import Flask
+from flask import Flask
 
 try:
     from google import genai
@@ -96,7 +96,6 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
         print("⚠️ Gemini no disponible o API Key vacía.", flush=True)
         return "<i>(Análisis de IA no disponible)</i>"
     
-    # Rol de sistema estricto para evitar idioma extranjero y cortes de longitud
     system_instruction = (
         "Eres un analista experto en apuestas de fútbol profesional. "
         "REGLA SUPREMA: Responde SIEMPRE y ÚNICAMENTE en idioma ESPAÑOL. "
@@ -122,8 +121,8 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=0.1,  # Reducida para que sea más predecible y directa
-                max_output_tokens=600  # Suficiente para viñetas cortas, evitando cualquier riesgo de corte
+                temperature=0.1,
+                max_output_tokens=600
             )
         )
         time.sleep(3)
