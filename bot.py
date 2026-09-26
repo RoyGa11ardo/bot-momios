@@ -17,14 +17,14 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Activo (Fecha FIFA + Nations League)"
+    return "Bot de Momios Activo (Análisis Completo sin Cortes)"
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# ⚽ LIGAS TEMPORALES ACTUALIZADAS
+# LIGAS ACTIVAS (Fecha FIFA + MX + MLS + Championship + Nations League)
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_usa_mls",
@@ -99,6 +99,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
     if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
         return "<i>(Análisis de IA no disponible)</i>"
     
+    # Prompt con tu estructura completa y rigurosa, pero con espacio de tokens suficiente
     prompt = (
         f"Eres un analista experto en apuestas deportivas de fútbol profesional para {liga_nombre}. "
         f"Vas a analizar de manera rigurosa y analítica el partido entre: {local} (Local) y {visita} (Visitante).\n\n"
@@ -106,7 +107,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
         "ADVERTENCIA CRÍTICA DE VERACIDAD (CERO ALUCINACIONES):\n"
         "- Básate estrictamente en el contexto actual de la temporada vigente.\n"
         "- NO inventes jugadores que ya no estén convocados o en el club (verifica plantillas actuales).\n"
-        "- Considera ausencias por fecha FIFA o desgaste físico.\n\n"
+        "- Si es partido de selecciones o Championship, considera el desgaste por viajes largos o convocatorias recientes.\n\n"
         
         "ESTRUCTURA OBLIGATORIA DEL ANÁLISIS (Usa viñetas cortas, directas y al grano):\n"
         "1. 📊 **Racha y Tendencia**: Análisis breve de su rendimiento reciente.\n"
@@ -114,7 +115,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
         "3. 🚩 **Promedios y Mercado**: Tendencia estimada de Córners y Tarjetas.\n"
         "4. 🎯 **Apuesta y Stake**: Sugerencia clara de apuesta y el **Nivel de Riesgo / Stake** (Bajo, Moderado o Alto).\n\n"
         
-        "Sé sumamente conciso, evita relleno y ve directo a los datos duros."
+        "Sé conciso pero completo, asegúrate de cerrar cada punto sin dejar frases a medias."
     )
     
     try:
@@ -124,7 +125,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.2,
-                max_output_tokens=450
+                max_output_tokens=750  # 🚀 Margen amplio para que entre todo el análisis detallado sin cortarse
             )
         )
         time.sleep(4)
@@ -153,7 +154,7 @@ def obtener_partidos_liga(sport_key):
         return []
 
 def ejecutar_ciclo():
-    print(f"🚀 Ejecutando escaneo con Nations League, MX, MLS, Championship y Selecciones...", flush=True)
+    print(f"🚀 Ejecutando escaneo con análisis completo y detallado...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
     ahora_local = datetime.now(tz)
@@ -255,7 +256,7 @@ def ejecutar_ciclo():
             f"   🤖 {analisis_ia}"
         )
 
-    titulo = f"⚽ <b>REPORTE FECHA FIFA & NATIONS LEAGUE</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
+    titulo = f"⚽ <b>REPORTE DE MOMIOS & ANÁLISIS DETALLADO</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
     
     if partidos_para_reporte:
         mensaje_final = titulo + "\n\n━━━━━━━━━━━━━━━\n\n".join(partidos_para_reporte)
