@@ -25,7 +25,7 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# LIGAS ACTIVAS (Corregidas y limpiadas de errores 404)
+# LIGAS ACTIVAS
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_usa_mls",
@@ -116,28 +116,30 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
         "• 🎯 <b>Apuesta y Stake</b>: [Pronóstico directo + Stake: Bajo, Moderado o Alto]"
     )
     
-    try:
-        print(f"🤖 Consultando IA para: {local} vs {visita}...", flush=True)
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',  # 🚀 Modelo oficial y estable corregido
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.1,
-                max_output_tokens=600
+    # Lista con el modelo oficial 3.8 que exige la API y un respaldo por si acaso
+    modelos_a_probar = ['gemini-3.8-flash', 'gemini-1.5-flash']
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    for modelo in modelos_a_probar:
+        try:
+            print(f"🤖 Consultando IA con modelo {modelo} para: {local} vs {visita}...", flush=True)
+            response = client.models.generate_content(
+                model=modelo,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.1,
+                    max_output_tokens=600
+                )
             )
-        )
-        time.sleep(3)
-        if response and response.text:
-            print(f"✅ IA respondió correctamente para {local} vs {visita}", flush=True)
-            return response.text.strip()
-        else:
-            print(f"⚠️ La IA regresó una respuesta vacía para {local} vs {visita}", flush=True)
-    except Exception as e:
-        print(f"❌ Error crítico en API de Gemini para {local} vs {visita}: {e}", flush=True)
-        time.sleep(4)
-        
+            time.sleep(2)
+            if response and response.text:
+                print(f"✅ IA respondió correctamente con {modelo}", flush=True)
+                return response.text.strip()
+        except Exception as e:
+            print(f"⚠️ Falló el modelo {modelo}: {e}", flush=True)
+            continue
+            
     return "<i>(Error al generar análisis de IA)</i>"
 
 def obtener_partidos_liga(sport_key):
@@ -176,7 +178,6 @@ def ejecutar_ciclo():
             local_raw = evento.get("home_team", "")
             visita_raw = evento.get("away_team", "")
             
-            # Sanitizamos caracteres HTML para evitar errores 400 en Telegram
             local = html.escape(local_raw)
             visita = html.escape(visita_raw)
             
