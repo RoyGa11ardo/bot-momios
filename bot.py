@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import html
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import requests
@@ -24,14 +25,11 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# LIGAS ACTIVAS
+# LIGAS ACTIVAS (Corregidas y limpiadas de errores 404)
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_usa_mls",
-    "soccer_england_championship",
-    "soccer_uefa_nations_league",
-    "soccer_international",
-    "soccer_concacaf_nations_league"
+    "soccer_uefa_nations_league"
 ]
 
 HORARIOS_OBJETIVO = [
@@ -44,8 +42,7 @@ EQUIPOS_TOP = [
     "españa", "francia", "inglaterra", "alemania", "portugal", "italia", 
     "holanda", "países bajos", "uruguay", "colombia", "belgica", "bélgica",
     "america", "américa", "chivas", "cruz azul", "pumas", "tigres", "rayados", "monterrey",
-    "inter miami", "la galaxy", "los angeles fc", "LAFC", "columbus crew",
-    "leeds", "burnley", "sheffield", "west brom", "norwich", "middlesbrough"
+    "inter miami", "la galaxy", "los angeles fc", "LAFC", "columbus crew"
 ]
 
 def es_equipo_top(local, visita):
@@ -69,23 +66,29 @@ def enviar_telegram(mensaje):
                 payload = {"chat_id": CHAT_ID, "text": chunk.strip(), "parse_mode": "HTML", "disable_web_page_preview": True}
                 try:
                     r = requests.post(url, json=payload, timeout=10)
-                    if r.status_code != 200: exito_total = False
-                except Exception:
+                    if r.status_code != 200: 
+                        print(f"❌ Error Telegram chunk: {r.status_code} - {r.text}", flush=True)
+                        exito_total = False
+                except Exception as e:
+                    print(f"❌ Excepción Telegram chunk: {e}", flush=True)
                     exito_total = False
                 chunk = b + "\n\n━━━━━━━━━━━━━━━\n\n"
         if chunk:
             payload = {"chat_id": CHAT_ID, "text": chunk.strip(), "parse_mode": "HTML", "disable_web_page_preview": True}
             try:
                 r = requests.post(url, json=payload, timeout=10)
-                if r.status_code != 200: exito_total = False
-            except Exception:
+                if r.status_code != 200: 
+                    print(f"❌ Error Telegram final chunk: {r.status_code} - {r.text}", flush=True)
+                    exito_total = False
+            except Exception as e:
+                print(f"❌ Excepción Telegram final chunk: {e}", flush=True)
                 exito_total = False
         return exito_total
     else:
         payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML", "disable_web_page_preview": True}
         try:
             r = requests.post(url, json=payload, timeout=10)
-            print(f"📤 Respuesta de Telegram status_code: {r.status_code}", flush=True)
+            print(f"📤 Respuesta de Telegram status_code: {r.status_code} - Res: {r.text}", flush=True)
             return r.status_code == 200
         except Exception as e:
             print(f"❌ Error enviando a Telegram: {e}", flush=True)
@@ -114,10 +117,10 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
     )
     
     try:
-        print(f"🤖 Consultando IA (Sistema Blindado) para: {local} vs {visita}...", flush=True)
+        print(f"🤖 Consultando IA para: {local} vs {visita}...", flush=True)
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model='gemini-3.5-flash',
+            model='gemini-2.5-flash',  # 🚀 Modelo oficial y estable corregido
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -170,8 +173,13 @@ def ejecutar_ciclo():
         nombre_liga_limpio = sport_key.replace("soccer_", "").replace("_", " ").title()
 
         for evento in eventos:
-            local = evento.get("home_team")
-            visita = evento.get("away_team")
+            local_raw = evento.get("home_team", "")
+            visita_raw = evento.get("away_team", "")
+            
+            # Sanitizamos caracteres HTML para evitar errores 400 en Telegram
+            local = html.escape(local_raw)
+            visita = html.escape(visita_raw)
+            
             commence_time_str = evento.get("commence_time", "")
             
             try:
@@ -196,9 +204,9 @@ def ejecutar_ciclo():
                         for out in m.get("outcomes", []):
                             name = out.get("name")
                             price = out.get("price")
-                            if name == local:
+                            if name == local_raw:
                                 precios["1"] = float(price)
-                            elif name == visita:
+                            elif name == visita_raw:
                                 precios["2"] = float(price)
                             else:
                                 precios["X"] = float(price)
@@ -209,7 +217,7 @@ def ejecutar_ciclo():
                 if p_1 > 0:
                     break
 
-            is_top = es_equipo_top(local, visita)
+            is_top = es_equipo_top(local_raw, visita_raw)
 
             prioridad_top = 0 if is_top else 1
             prioridad_hoy = 0 if dias_restantes == 0 else 1
