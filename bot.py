@@ -101,22 +101,19 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
     
     system_instruction = (
         "Eres un analista experto en apuestas de fútbol profesional. "
-        "REGLA SUPREMA: Responde SIEMPRE y ÚNICAMENTE en idioma ESPAÑOL. "
-        "Sé extremadamente conciso y directo: máximo una línea corta por cada punto. "
-        "Nunca dejes frases a medias ni te extiendas en párrafos largos."
+        "REGLA SUPREMA: Responde SIEMPRE en español. "
+        "Ve directo al grano en cada punto, sin rodeos, pero completa cada idea sin dejar ninguna frase a medias."
     )
     
     prompt = (
-        f"Liga: {liga_nombre}\n"
-        f"Partido: {local} (Local) vs {visita} (Visitante)\n\n"
-        "Genera el análisis bajo esta estructura exacta (una línea por viñeta):\n"
-        "• 📊 <b>Racha y Tendencia</b>: [Escribe aquí una frase corta del momento actual]\n"
-        "• 🏥 <b>Bajas Clave</b>: [Escribe aquí las ausencias principales o 'Sin bajas relevantes']\n"
-        "• 🚩 <b>Mercado / Córners</b>: [Escribe aquí la tendencia estimada de juego]\n"
-        "• 🎯 <b>Apuesta y Stake</b>: [Pronóstico directo + Stake: Bajo, Moderado o Alto]"
+        f"Partido: {local} vs {visita} ({liga_nombre}).\n"
+        "Genera un análisis completo pero conciso usando estrictamente esta estructura:\n"
+        "• 📊 <b>Racha y Tendencia</b>: [Estado actual del equipo y últimos resultados]\n"
+        "• 🏥 <b>Bajas Clave</b>: [Jugadores ausentes importantes o sin reportar]\n"
+        "• 🚩 <b>Mercado / Córners</b>: [Tendencia de juego esperada]\n"
+        "• 🎯 <b>Apuesta y Stake</b>: [Pronóstico directo y nivel de confianza Bajo/Moderado/Alto]"
     )
     
-    # Lista con el modelo oficial 3.8 que exige la API y un respaldo por si acaso
     modelos_a_probar = ['gemini-3.8-flash', 'gemini-1.5-flash']
     client = genai.Client(api_key=GEMINI_API_KEY)
     
@@ -128,11 +125,11 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    temperature=0.1,
-                    max_output_tokens=600
+                    temperature=0.2
+                    # Sin max_output_tokens: toda la libertad natural para evitar cortes
                 )
             )
-            time.sleep(2)
+            time.sleep(3)
             if response and response.text:
                 print(f"✅ IA respondió correctamente con {modelo}", flush=True)
                 return response.text.strip()
@@ -250,7 +247,8 @@ def ejecutar_ciclo():
         
         analisis_ia = "<i>(Momios de mercado listados)</i>"
         
-        if llamadas_ia < LIMITE_IA:
+        # 🚀 REGLA NUEVA: Solo se pide análisis de IA si el partido es HOY (dias_restantes == 0)
+        if dias_restantes == 0 and llamadas_ia < LIMITE_IA:
             analisis_ia = obtener_analisis_gemini(local, visita, c["liga"])
             llamadas_ia += 1
 
