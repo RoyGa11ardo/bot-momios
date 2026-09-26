@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Activo (Análisis Completo sin Cortes)"
+    return "Bot de Momios Activo (Análisis Completo)"
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
@@ -97,45 +97,44 @@ def enviar_telegram(mensaje):
 
 def obtener_analisis_gemini(local, visita, liga_nombre):
     if not GEMINI_DISPONIBLE or not GEMINI_API_KEY:
+        print("⚠️ Gemini no disponible o API Key vacía.", flush=True)
         return "<i>(Análisis de IA no disponible)</i>"
     
-    # Prompt con tu estructura completa y rigurosa, pero con espacio de tokens suficiente
     prompt = (
         f"Eres un analista experto en apuestas deportivas de fútbol profesional para {liga_nombre}. "
-        f"Vas a analizar de manera rigurosa y analítica el partido entre: {local} (Local) y {visita} (Visitante).\n\n"
+        f"Analiza de manera rigurosa y directa el partido entre: {local} (Local) y {visita} (Visitante).\n\n"
         
-        "ADVERTENCIA CRÍTICA DE VERACIDAD (CERO ALUCINACIONES):\n"
-        "- Básate estrictamente en el contexto actual de la temporada vigente.\n"
-        "- NO inventes jugadores que ya no estén convocados o en el club (verifica plantillas actuales).\n"
-        "- Si es partido de selecciones o Championship, considera el desgaste por viajes largos o convocatorias recientes.\n\n"
-        
-        "ESTRUCTURA OBLIGATORIA DEL ANÁLISIS (Usa viñetas cortas, directas y al grano):\n"
-        "1. 📊 **Racha y Tendencia**: Análisis breve de su rendimiento reciente.\n"
+        "ESTRUCTURA OBLIGATORIA DEL ANÁLISIS (Usa viñetas breves, directas y al grano):\n"
+        "1. 📊 **Racha y Tendencia**: Rendimiento reciente de ambos.\n"
         "2. 🏥 **Bajas / Jugadores Clave**: Ausencias importantes confirmadas.\n"
         "3. 🚩 **Promedios y Mercado**: Tendencia estimada de Córners y Tarjetas.\n"
-        "4. 🎯 **Apuesta y Stake**: Sugerencia clara de apuesta y el **Nivel de Riesgo / Stake** (Bajo, Moderado o Alto).\n\n"
+        "4. **Apuesta y Stake**: Sugerencia clara y el Nivel de Riesgo / Stake (Bajo, Moderado o Alto).\n\n"
         
         "Sé conciso pero completo, asegúrate de cerrar cada punto sin dejar frases a medias."
     )
     
     try:
+        print(f"🤖 Consultando IA para: {local} vs {visita}...", flush=True)
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model='gemini-3.6-flash',
+            model='gemini-3.5-flash',  # 🚀 Modelo oficial y activo en la API
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.2,
-                max_output_tokens=750  # 🚀 Margen amplio para que entre todo el análisis detallado sin cortarse
+                max_output_tokens=750
             )
         )
         time.sleep(4)
         if response and response.text:
+            print(f"✅ IA respondió correctamente para {local} vs {visita}", flush=True)
             return response.text.strip()
+        else:
+            print(f"⚠️ La IA regresó una respuesta vacía para {local} vs {visita}", flush=True)
     except Exception as e:
-        print(f"⚠️ Error en análisis IA para {local} vs {visita}: {e}", flush=True)
+        print(f"❌ Error crítico en API de Gemini para {local} vs {visita}: {e}", flush=True)
         time.sleep(5)
         
-    return "<i>(Análisis omitido por protección de cuota)</i>"
+    return "<i>(Error al generar análisis de IA)</i>"
 
 def obtener_partidos_liga(sport_key):
     if not THE_ODDS_API_KEY:
@@ -154,7 +153,7 @@ def obtener_partidos_liga(sport_key):
         return []
 
 def ejecutar_ciclo():
-    print(f"🚀 Ejecutando escaneo con análisis completo y detallado...", flush=True)
+    print(f"🚀 Ejecutando escaneo general...", flush=True)
     
     tz = ZoneInfo("America/Mazatlan")
     ahora_local = datetime.now(tz)
@@ -241,7 +240,7 @@ def ejecutar_ciclo():
         
         analisis_ia = "<i>(Momios de mercado listados)</i>"
         
-        if dias_restantes <= 1 and llamadas_ia < LIMITE_IA:
+        if llamadas_ia < LIMITE_IA:
             analisis_ia = obtener_analisis_gemini(local, visita, c["liga"])
             llamadas_ia += 1
 
