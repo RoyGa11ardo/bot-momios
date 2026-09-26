@@ -4,7 +4,7 @@ import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import requests
-from flask import Flask
+from Flask import Flask
 
 try:
     from google import genai
@@ -17,14 +17,14 @@ app = Flask(__name__)
 
 @app.route('/', methods=['HEAD', 'GET'])
 def home():
-    return "Bot de Momios Activo (Análisis Completo)"
+    return "Bot de Momios Activo (Sistema Blindado)"
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1530533411")
 THE_ODDS_API_KEY = os.environ.get("THE_ODDS_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# LIGAS ACTIVAS (Fecha FIFA + MX + MLS + Championship + Nations League)
+# LIGAS ACTIVAS
 LIGAS = [
     "soccer_mexico_ligamx",
     "soccer_usa_mls",
@@ -40,15 +40,11 @@ HORARIOS_OBJETIVO = [
 ]
 
 EQUIPOS_TOP = [
-    # Selecciones Nacionales Top
     "mexico", "méxico", "argentina", "brasil", "estados unidos", "usa", 
     "españa", "francia", "inglaterra", "alemania", "portugal", "italia", 
     "holanda", "países bajos", "uruguay", "colombia", "belgica", "bélgica",
-    # Liga MX Top
     "america", "américa", "chivas", "cruz azul", "pumas", "tigres", "rayados", "monterrey",
-    # MLS Top
     "inter miami", "la galaxy", "los angeles fc", "LAFC", "columbus crew",
-    # Championship Equipos destacados
     "leeds", "burnley", "sheffield", "west brom", "norwich", "middlesbrough"
 ]
 
@@ -100,31 +96,37 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
         print("⚠️ Gemini no disponible o API Key vacía.", flush=True)
         return "<i>(Análisis de IA no disponible)</i>"
     
+    # Rol de sistema estricto para evitar idioma extranjero y cortes de longitud
+    system_instruction = (
+        "Eres un analista experto en apuestas de fútbol profesional. "
+        "REGLA SUPREMA: Responde SIEMPRE y ÚNICAMENTE en idioma ESPAÑOL. "
+        "Sé extremadamente conciso y directo: máximo una línea corta por cada punto. "
+        "Nunca dejes frases a medias ni te extiendas en párrafos largos."
+    )
+    
     prompt = (
-        f"Eres un analista experto en apuestas deportivas de fútbol profesional para {liga_nombre}. "
-        f"Analiza de manera rigurosa y directa el partido entre: {local} (Local) y {visita} (Visitante).\n\n"
-        
-        "ESTRUCTURA OBLIGATORIA DEL ANÁLISIS (Usa viñetas breves, directas y al grano):\n"
-        "1. 📊 **Racha y Tendencia**: Rendimiento reciente de ambos.\n"
-        "2. 🏥 **Bajas / Jugadores Clave**: Ausencias importantes confirmadas.\n"
-        "3. 🚩 **Promedios y Mercado**: Tendencia estimada de Córners y Tarjetas.\n"
-        "4. **Apuesta y Stake**: Sugerencia clara y el Nivel de Riesgo / Stake (Bajo, Moderado o Alto).\n\n"
-        
-        "Sé conciso pero completo, asegúrate de cerrar cada punto sin dejar frases a medias."
+        f"Liga: {liga_nombre}\n"
+        f"Partido: {local} (Local) vs {visita} (Visitante)\n\n"
+        "Genera el análisis bajo esta estructura exacta (una línea por viñeta):\n"
+        "• 📊 <b>Racha y Tendencia</b>: [Escribe aquí una frase corta del momento actual]\n"
+        "• 🏥 <b>Bajas Clave</b>: [Escribe aquí las ausencias principales o 'Sin bajas relevantes']\n"
+        "• 🚩 <b>Mercado / Córners</b>: [Escribe aquí la tendencia estimada de juego]\n"
+        "• 🎯 <b>Apuesta y Stake</b>: [Pronóstico directo + Stake: Bajo, Moderado o Alto]"
     )
     
     try:
-        print(f"🤖 Consultando IA para: {local} vs {visita}...", flush=True)
+        print(f"🤖 Consultando IA (Sistema Blindado) para: {local} vs {visita}...", flush=True)
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model='gemini-3.5-flash',  # 🚀 Modelo oficial y activo en la API
+            model='gemini-3.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=750
+                system_instruction=system_instruction,
+                temperature=0.1,  # Reducida para que sea más predecible y directa
+                max_output_tokens=600  # Suficiente para viñetas cortas, evitando cualquier riesgo de corte
             )
         )
-        time.sleep(4)
+        time.sleep(3)
         if response and response.text:
             print(f"✅ IA respondió correctamente para {local} vs {visita}", flush=True)
             return response.text.strip()
@@ -132,7 +134,7 @@ def obtener_analisis_gemini(local, visita, liga_nombre):
             print(f"⚠️ La IA regresó una respuesta vacía para {local} vs {visita}", flush=True)
     except Exception as e:
         print(f"❌ Error crítico en API de Gemini para {local} vs {visita}: {e}", flush=True)
-        time.sleep(5)
+        time.sleep(4)
         
     return "<i>(Error al generar análisis de IA)</i>"
 
@@ -251,8 +253,8 @@ def ejecutar_ciclo():
         partidos_para_reporte.append(
             f"{etiqueta}<b>{local} vs {visita}</b>\n"
             f"   🏆 <i>{c['liga']}</i> | ⏰ {c['hora']}\n"
-            f"   📊 Momios: 1({c['p_1']}) | X({c['p_x']}) | 2({c['p_2']})\n"
-            f"   🤖 {analisis_ia}"
+            f"   📊 Momios: 1({c['p_1']}) | X({c['p_x']}) | 2({c['p_2']})\n\n"
+            f"{analisis_ia}"
         )
 
     titulo = f"⚽ <b>REPORTE DE MOMIOS & ANÁLISIS DETALLADO</b>\n<i>Actualizado: {ahora_local.strftime('%d/%b %H:%M')} hrs</i>\n\n"
